@@ -11,3 +11,8 @@ src/ui
 .DS_Store
 **/.DS_Store
 .qtc_clangd/
+.tmp/
+lib/
+include/cld2/
+include/taglib/
+*.log

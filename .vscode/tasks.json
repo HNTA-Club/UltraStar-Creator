@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build UltraStar-Creator (Windows Release)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\build.bat",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "Build UltraStar-Creator (Windows Debug)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\build.bat",
+      "args": ["debug"],
+      "group": "build",
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "Run UltraStar-Creator (Windows)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\bin\\release\\UltraStar-Creator.exe",
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean UltraStar-Creator (Windows)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "call \"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Auxiliary\\Build\\vcvars64.bat\" && cd /d \"${workspaceFolder}\\src\" && nmake clean"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Build UltraStar-Creator (WSL Linux Release)",
+      "type": "shell",
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-c",
+        "cd /mnt/d/Programming/UltraStar-Creator/src && qmake6 UltraStar-Creator.pro && make -j$(nproc)"
+      ],
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Run UltraStar-Creator (WSL Linux GUI)",
+      "type": "shell",
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-c",
+        "cd /mnt/d/Programming/UltraStar-Creator/bin/release && QT_QPA_PLATFORM=xcb ./UltraStar-Creator"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

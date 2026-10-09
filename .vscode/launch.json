@@ -1,0 +1,40 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch UltraStar-Creator (Windows Native)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/release/UltraStar-Creator.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/bin/release",
+      "environment": [],
+      "console": "externalTerminal",
+      "preLaunchTask": "Build UltraStar-Creator (Windows Release)"
+    },
+    {
+      "name": "Launch UltraStar-Creator (WSL Linux Release)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "/mnt/d/Programming/UltraStar-Creator/bin/release/UltraStar-Creator",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "/mnt/d/Programming/UltraStar-Creator/bin/release",
+      "environment": [
+        { "name": "QT_QPA_PLATFORM", "value": "xcb" }
+      ],
+      "externalConsole": false,
+      "pipeTransport": {
+        "pipeCwd": "",
+        "pipeProgram": "wsl.exe",
+        "pipeArgs": [],
+        "debuggerPath": "/usr/bin/gdb"
+      },
+      "sourceFileMap": {
+        "/mnt/d/Programming/UltraStar-Creator": "${workspaceFolder}"
+      },
+      "preLaunchTask": "Build UltraStar-Creator (WSL Linux Release)"
+    }
+  ]
+}
