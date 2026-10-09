@@ -128,6 +128,7 @@ private:
 	bool addLinebreak = false;
 	QString cleanLyrics(QString);
 	void splitLyricsIntoSyllables();
+	void resetTappingState();
 	HSTREAM _mediaStream;
 	void BASS_Stop();
 	void BASS_Free();

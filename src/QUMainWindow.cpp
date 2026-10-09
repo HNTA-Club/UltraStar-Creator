@@ -90,26 +90,23 @@ QUMainWindow::QUMainWindow(QWidget *parent): QMainWindow(parent), ui(new Ui::QUM
 		settings.setValue("firstRun", firstRun);
 	}
 
-	//
+	fileInfo_MP3 = nullptr;
+	fileInfo_SRT = nullptr;
+	_mediaStream = 0;
+
 	QFileInfo fi(settings.value("songfile").toString());
 	if (fi.exists()) {
 		settings.remove("songfile");
-		fileInfo_MP3 = &fi;
+		fileInfo_MP3 = new QFileInfo(fi.absoluteFilePath());
 		handleMP3();
 	}
 
 	// init
-	numSyllables = 0;
-	firstNoteStartBeat = 0;
-	currentNoteBeatLength = 0;
-	currentSyllableIndex = 0;
-	currentCharacterIndex = 0;
-	isFirstKeyPress = true;
-	firstNote = true;
 	clipboard = QApplication::clipboard();
 	state = QUMainWindow::uninitialized;
 	previewState = QUMainWindow::uninitialized;
 	defaultDir = QDir::homePath();
+	resetTappingState();
 
 	if (settings.value("allowUpdateCheck", QVariant(false)).toBool()) {
 		this->checkForUpdate();
@@ -455,6 +452,20 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 	if (state == initialized) {
 		setCursor(Qt::WaitCursor);
 		state = QUMainWindow::playing;
+		currentSyllableIndex = 0;
+		currentCharacterIndex = 0;
+		firstNote = true;
+		firstNoteStartBeat = 0;
+		currentNoteStartTime = 0;
+		currentNoteStartBeat = 0;
+		currentNoteBeatLength = 0;
+		previousNoteEndBeat = 0;
+		isTapping = false;
+		isFirstKeyPress = true;
+		addLinebreak = false;
+		currentOutputTextLine.clear();
+		timeLineMap.clear();
+		ui->textEdit_OutputLyrics->clear();
 		ui->pushButton_PlayPause->setIcon(QIcon(":/player/pause.png"));
 		QWidget::setAcceptDrops(false);
 		ui->groupBox_SongHeader->setDisabled(true);
@@ -681,6 +692,11 @@ void QUMainWindow::on_pushButton_Tap_released()
 	}
 	else {
 		ui->pushButton_Tap->setText("");
+		ui->pushButton_NextSyllable1->setText("");
+		ui->pushButton_NextSyllable2->setText("");
+		ui->pushButton_NextSyllable3->setText("");
+		ui->pushButton_NextSyllable4->setText("");
+		ui->pushButton_NextSyllable5->setText("");
 		on_pushButton_Stop_clicked();
 
 		int result = QUMessageBox::information(this,
@@ -940,6 +956,7 @@ void QUMainWindow::on_pushButton_BrowseSubtitles_clicked()
 	fileInfo_SRT = new QFileInfo(filename_SRT);
 	
 	if (!filename_SRT.isEmpty() && fileInfo_SRT->exists()) {
+		resetTappingState();
 		SubtitleParserFactory *subParserFactory = new SubtitleParserFactory(fileInfo_SRT->absoluteFilePath().toStdString());
 		SubtitleParser *parser = subParserFactory->getParser();
 		
@@ -1106,7 +1123,7 @@ void QUMainWindow::on_pushButton_OutputLyricsDecreaseFontSize_clicked()
 void QUMainWindow::on_plainTextEdit_InputLyrics_textChanged()
 {
 	if (!ui->plainTextEdit_InputLyrics->toPlainText().isEmpty() && !ui->lineEdit_MP3->text().isEmpty()) {
-		if (state == QUMainWindow::uninitialized) {
+		if (state == QUMainWindow::uninitialized || state == QUMainWindow::stopped) {
 			state = QUMainWindow::initialized;
 		}
 		ui->pushButton_PlayPause->setEnabled(true);
@@ -1242,13 +1259,9 @@ void QUMainWindow::BASS_StopAndFree() {
 		if(!_mediaStream)
 			return;
 
-		if(!BASS_ChannelStop(_mediaStream)) {
-			return;
-		}
-
-		if(!BASS_StreamFree(_mediaStream)) {
-			return;
-		}
+		BASS_ChannelStop(_mediaStream);
+		BASS_StreamFree(_mediaStream);
+		_mediaStream = 0;
 }
 
 void QUMainWindow::BASS_Play() {
@@ -1305,6 +1318,9 @@ void QUMainWindow::BASS_SetPosition(double seconds) {
 
 void QUMainWindow::handleMP3() {
 	setCursor(Qt::WaitCursor);
+
+	BASS_StopAndFree();
+	resetTappingState();
 	
 	// clear any previous entries
 	ui->lineEdit_Artist->clear();
@@ -1533,10 +1549,12 @@ void QUMainWindow::cleanAndSyllabifyLyrics(QString lyrics) {
 		syllabifiedLyrics = cleanedLyrics;
 	}
 	
+	resetTappingState();
+
 	ui->plainTextEdit_InputLyrics->setPlainText(syllabifiedLyrics);
 	
 	// update state
-	if (!ui->plainTextEdit_InputLyrics->toPlainText().isEmpty()) {
+	if (!ui->plainTextEdit_InputLyrics->toPlainText().isEmpty() && !ui->lineEdit_MP3->text().isEmpty()) {
 		state = QUMainWindow::initialized;
 		QMainWindow::statusBar()->showMessage(tr("State: initialized."));
 		ui->pushButton_PlayPause->setEnabled(true);
@@ -1649,41 +1667,62 @@ void QUMainWindow::updatePreviewTime() {
 		}
 }
 
+void QUMainWindow::resetTappingState() {
+	timeLineMap.clear();
+	lyricsSyllableList.clear();
+	lyricsString.clear();
+	lyricsStringList.clear();
+	numSyllables = 0;
+	firstNoteStartBeat = 0;
+	currentNoteBeatLength = 0;
+	currentNoteStartTime = 0;
+	currentNoteStartBeat = 0;
+	previousNoteEndBeat = 0;
+	currentSyllableIndex = 0;
+	currentCharacterIndex = 0;
+	firstNote = true;
+	isTapping = false;
+	isFirstKeyPress = true;
+	addLinebreak = false;
+	currentOutputTextLine.clear();
+
+	ui->pushButton_Tap->setText("");
+	ui->pushButton_NextSyllable1->setText("");
+	ui->pushButton_NextSyllable2->setText("");
+	ui->pushButton_NextSyllable3->setText("");
+	ui->pushButton_NextSyllable4->setText("");
+	ui->pushButton_NextSyllable5->setText("");
+
+	lyricsProgressBar->setValue(0);
+	lyricsProgressBar->hide();
+
+	ui->textEdit_OutputLyrics->clear();
+	ui->horizontalSlider_MP3->setValue(0);
+	ui->label_TimeElapsed->setText("0:00");
+
+	ui->plainTextEdit_InputLyrics->setReadOnly(false);
+	ui->groupBox_SongHeader->setEnabled(true);
+	ui->groupBox_OutputLyrics->setDisabled(true);
+	ui->groupBox_TapArea->setDisabled(true);
+	ui->pushButton_Tap->setDisabled(true);
+	ui->pushButton_UndoTap->setDisabled(true);
+	ui->pushButton_Stop->setDisabled(true);
+	ui->pushButton_Reset->setDisabled(true);
+	ui->pushButton_SaveToFile->setDisabled(true);
+	ui->pushButton_startUltraStar->setDisabled(true);
+	ui->pushButton_startYass->setDisabled(true);
+}
+
 void QUMainWindow::on_pushButton_Reset_clicked()
 {
 	if (state == stopped) {
-		timeLineMap.clear();
-		lyricsProgressBar->hide();
+		resetTappingState();
 		state = QUMainWindow::initialized;
 		previewState = QUMainWindow::initialized;
-		isTapping = false;
-		isFirstKeyPress = true;
-		numSyllables = 0;
-		firstNoteStartBeat = 0;
-		currentNoteBeatLength = 0;
-		currentSyllableIndex = 0;
-		currentCharacterIndex = 0;
-		firstNote = true;
-		lyricsSyllableList.clear();
-		ui->textEdit_OutputLyrics->clear();
-		ui->pushButton_Tap->setText("");
-		ui->pushButton_NextSyllable1->setText("");
-		ui->pushButton_NextSyllable2->setText("");
-		ui->pushButton_NextSyllable3->setText("");
-		ui->pushButton_NextSyllable4->setText("");
-		ui->pushButton_NextSyllable5->setText("");
-		ui->horizontalSlider_MP3->setValue(0);
-		lyricsProgressBar->setValue(0);
-		ui->groupBox_SongHeader->setEnabled(true);
-		ui->plainTextEdit_InputLyrics->setReadOnly(false);
-		ui->groupBox_OutputLyrics->setDisabled(true);
-		ui->groupBox_TapArea->setDisabled(true);
-		ui->pushButton_Tap->setDisabled(true);
-		ui->pushButton_UndoTap->setDisabled(true);
 		ui->pushButton_PlayPause->setEnabled(true);
-		ui->pushButton_Stop->setDisabled(true);
-		ui->pushButton_Reset->setDisabled(true);
-		_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data() , 0, 0, BASS_STREAM_DECODE);
+		if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE);
+		}
 	}
 	else {
 		// should not be possible
@@ -1787,6 +1826,7 @@ void QUMainWindow::updateSyllableButtons() {
 
 void QUMainWindow::splitLyricsIntoSyllables()
 {
+	lyricsSyllableList.clear();
 	QRegularExpression re("([^ •+\n-]+[ •+\n-]*)"); //todo: verify regular expression
 	QRegularExpressionMatchIterator i = re.globalMatch(lyricsString);
 	
