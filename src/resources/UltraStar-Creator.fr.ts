@@ -1490,8 +1490,8 @@ en mode rapide.</translation>
         <translation type="obsolete">Ceci est un message test pour Monty.</translation>
     </message>
     <message>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time. Just press the &lt;i&gt;Hide&lt;/i&gt; button below and I will disappear for now.</source>
-        <translation type="obsolete">Bonjour! Je suis Monty le Mammouth. Je vais vous donner quelques conseils de temps en temps. Pressez juste le bouton &lt;i&gt;Masquer&lt;/i&gt; ci-dessous et je disparaitrais pour le moment.</translation>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time. Just press the &lt;i&gt;Hide&lt;/i&gt; button below and I will disappear for now.</source>
+        <translation type="obsolete">Bonjour! Je suis Sirkka le Grillon. Je vais vous donner quelques conseils de temps en temps. Pressez juste le bouton &lt;i&gt;Masquer&lt;/i&gt; ci-dessous et je disparaitrais pour le moment.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="22"/>
@@ -1651,8 +1651,8 @@ en mode rapide.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="76"/>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
-        <translation>Bonjour! Je suis Monty le Mammouth. Je vais vous donner quelques conseils de temps en temps.&lt;br&gt;&lt;br&gt;Pour démarrer, ouvrer un fichier audio et complétez les informations manquantes dans les Informations sur la Chanson. Ensuite insérez les paroles de la chanson dans le cadre approprié, faites la syllabification comme expliqué et commencez l&apos;enregistrement en appuyant sur &lt;i&gt;Lecture&lt;/i&gt;.</translation>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
+        <translation>Bonjour! Je suis Sirkka le Grillon. Je vais vous donner quelques conseils de temps en temps.&lt;br&gt;&lt;br&gt;Pour démarrer, ouvrer un fichier audio et complétez les informations manquantes dans les Informations sur la Chanson. Ensuite insérez les paroles de la chanson dans le cadre approprié, faites la syllabification comme expliqué et commencez l&apos;enregistrement en appuyant sur &lt;i&gt;Lecture&lt;/i&gt;.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="105"/>

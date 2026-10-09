@@ -522,8 +522,8 @@
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="76"/>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
-        <translation>¡Hola! Soy Monty el Mamut. Voy a darte algunos trucos de vez en cuando.&lt;br&gt;&lt;br&gt;Para comenzar, abre un archivo de audio y completa la información faltante en las etiquetas del encabezado de la canción. Luego pega la letra de la canción en el campo correspondiente, silabifica según el idioma y comienza a hacer los toques presionando &lt;i&gt;Play&lt;/i&gt;.</translation>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
+        <translation>¡Hola! Soy Sirkka el Grillo. Voy a darte algunos trucos de vez en cuando.&lt;br&gt;&lt;br&gt;Para comenzar, abre un archivo de audio y completa la información faltante en las etiquetas del encabezado de la canción. Luego pega la letra de la canción en el campo correspondiente, silabifica según el idioma y comienza a hacer los toques presionando &lt;i&gt;Play&lt;/i&gt;.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="105"/>

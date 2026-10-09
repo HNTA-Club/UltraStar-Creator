@@ -75,7 +75,7 @@ QPixmap QUMonty::pic(QUMonty::Status status) {
 }
 
 QString QUMonty::welcomeMsg() {
-	QString welcomeStr(QObject::tr("Hello! I am Monty the Mammoth. I will tell you some hints from time to time.<br><br>To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing <i>Play</i>."));
+	QString welcomeStr(QObject::tr("Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.<br><br>To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing <i>Play</i>."));
 
 	return welcomeStr;
 }

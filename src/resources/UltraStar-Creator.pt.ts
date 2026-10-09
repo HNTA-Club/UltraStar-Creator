@@ -322,7 +322,7 @@
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="76"/>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -1810,7 +1810,7 @@ Za pomocą myszki (lub spacji) naciśnij i przytrzymaj ten przycisk, gdy wokalis
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="76"/>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
         <translation>Witaj! Jestem Mamut Monty. Od czasu do czasu udzielę Ci kilku przydatnych wskazówek. &lt;br&gt; Aby rozpocząć, otwórz plik audio piosenki i wypełnij brakujące informacje w nagłówku utworu. Następnie wklej tekst piosenki w odpowiednim polu, podziel go na sylaby a następnie uruchom proces tworzenia pliku txt naciskając przycisk &lt;i&gt; Play &lt;/ i&gt;.</translation>
     </message>
     <message>

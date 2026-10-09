@@ -1547,8 +1547,8 @@ I&apos;m ve+~+ry sure.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="76"/>
-        <source>Hello! I am Monty the Mammoth. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
-        <translation>Ciao! Sono Monty il Mammut. Di tanto in tanto ti darò qualche suggerimento.&lt;br&gt;&lt;br&gt;Per iniziare, apri il file di un brano e completa le informazioni mancanti nell&apos;intestazione del brano. Quindi incolla il testo del brano nel campo corrispondente, suddividilo in sillabe secondo necessità e avvia il tapping premendo &lt;i&gt;Riproduci&lt;/i&gt;.</translation>
+        <source>Hello! I am Sirkka the Cricket. I will tell you some hints from time to time.&lt;br&gt;&lt;br&gt;To get started, open a song file and fill out missing information in the song header. Then paste the song lyrics into the corresponding field, syllabificate as needed and then start tapping by pressing &lt;i&gt;Play&lt;/i&gt;.</source>
+        <translation>Ciao! Sono Sirkka il Grillo. Di tanto in tanto ti darò qualche suggerimento.&lt;br&gt;&lt;br&gt;Per iniziare, apri il file di un brano e completa le informazioni mancanti nell&apos;intestazione del brano. Quindi incolla il testo del brano nel campo corrispondente, suddividilo in sillabe secondo necessità e avvia il tapping premendo &lt;i&gt;Riproduci&lt;/i&gt;.</translation>
     </message>
     <message>
         <location filename="../QUMonty.cpp" line="105"/>
