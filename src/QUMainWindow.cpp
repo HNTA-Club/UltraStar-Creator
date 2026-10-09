@@ -26,6 +26,7 @@
 #include <QTemporaryFile>
 #include <QRegularExpression>
 #include <QMenuBar>
+#include <QStyle>
 #include <QDebug>
 
 #include "compact_lang_det.h"
@@ -40,7 +41,28 @@ std::vector<std::pair<std::string, const char *>> FILENAME_REPLACEMENTS{
 QUMainWindow::QUMainWindow(QWidget *parent): QMainWindow(parent), ui(new Ui::QUMainWindow) {
 	ui->setupUi(this);
 	
+	fileInfo_MP3 = nullptr;
+	refreshMediaAction = nullptr;
+	lastSelectedCover = "";
+	lastSelectedBackground = "";
+	lastSelectedVideo = "";
+
 	connect(ui->horizontalSlider_PlaybackSpeed, SIGNAL(valueChanged(int)), this, SLOT(setPlaybackSpeed(int)));
+	connect(ui->comboBox_Cover, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		if (ui->comboBox_Cover->itemText(index) == tr("[Refresh...]")) {
+			refreshMedia(true);
+		}
+	});
+	connect(ui->comboBox_Background, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		if (ui->comboBox_Background->itemText(index) == tr("[Refresh...]")) {
+			refreshMedia(true);
+		}
+	});
+	connect(ui->comboBox_Video, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		if (ui->comboBox_Video->itemText(index) == tr("[Refresh...]")) {
+			refreshMedia(true);
+		}
+	});
 
 	initWindow();
 	initMenuBar();
@@ -279,6 +301,12 @@ void QUMainWindow::initMenuBar() {
 	
 	extrasMenu = menuBar()->addMenu(tr("&Extras"));
 	
+	refreshMediaAction = new QAction(style()->standardIcon(QStyle::SP_BrowserReload), tr("&Refresh Media"), this);
+	refreshMediaAction->setShortcut(QKeySequence(Qt::Key_F5));
+	refreshMediaAction->setEnabled(false);
+	connect(refreshMediaAction, &QAction::triggered, this, [this]() { refreshMedia(true); });
+	extrasMenu->addAction(refreshMediaAction);
+
 	generateFreestyleTextFilesActions = new QAction(QIcon(":/icons/beans.png"), tr("&Generate freestyle text files..."), this);
 	connect(generateFreestyleTextFilesActions, SIGNAL(triggered()), this, SLOT(generateFreestyleTextFiles()));
 	extrasMenu->addAction(generateFreestyleTextFilesActions);
@@ -471,13 +499,13 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 			timeLineMap.insert(-8, QString("#CREATOR:%1").arg(ui->lineEdit_Creator->text()));
 		}
 		timeLineMap.insert(-7, QString("#MP3:%1").arg(ui->lineEdit_MP3->text()));
-		if (!ui->comboBox_Cover->currentText().isEmpty()) {
+		if (!ui->comboBox_Cover->currentText().isEmpty() && ui->comboBox_Cover->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-6, QString("#COVER:%1").arg(ui->comboBox_Cover->currentText()));
 		}
-		if (!ui->comboBox_Background->currentText().isEmpty()) {
+		if (!ui->comboBox_Background->currentText().isEmpty() && ui->comboBox_Background->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-5, QString("#BACKGROUND:%1").arg(ui->comboBox_Background->currentText()));
 		}
-		if (!ui->comboBox_Video->currentText().isEmpty()) {
+		if (!ui->comboBox_Video->currentText().isEmpty() && ui->comboBox_Video->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-4, QString("#VIDEO:%1").arg(ui->comboBox_Video->currentText()));
 		}
 		timeLineMap.insert(-2, QString("#BPM:%1").arg(ui->doubleSpinBox_BPM->text()));
@@ -778,6 +806,36 @@ void QUMainWindow::dropEvent( QDropEvent* event ) {
 							handleLyrics(ui->plainTextEdit_InputLyrics->toPlainText());
 						}
 					}
+					else if(QUSongSupport::allowedImageFiles().contains(fileScheme, Qt::CaseInsensitive)) {
+						if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+							QString destPath = QDir(fileInfo_MP3->absolutePath()).filePath(fileInfo.fileName());
+							if (QDir::toNativeSeparators(fileInfo.absoluteFilePath()) != QDir::toNativeSeparators(destPath)) {
+								if (!QFile::exists(destPath)) {
+									QFile::copy(fileInfo.absoluteFilePath(), destPath);
+								}
+							}
+							refreshMedia(true);
+							int idx = ui->comboBox_Cover->findText(fileInfo.fileName());
+							if (fileInfo.fileName().contains("[BG]", Qt::CaseInsensitive) || fileInfo.fileName().contains("background", Qt::CaseInsensitive)) {
+								if (idx > 0) ui->comboBox_Background->setCurrentIndex(idx);
+							} else {
+								if (idx > 0) ui->comboBox_Cover->setCurrentIndex(idx);
+							}
+						}
+					}
+					else if(QUSongSupport::allowedVideoFiles().contains(fileScheme, Qt::CaseInsensitive) && fileInfo_MP3 && fileInfo_MP3->exists()) {
+						QString destPath = QDir(fileInfo_MP3->absolutePath()).filePath(fileInfo.fileName());
+						if (QDir::toNativeSeparators(fileInfo.absoluteFilePath()) != QDir::toNativeSeparators(destPath)) {
+							if (!QFile::exists(destPath)) {
+								QFile::copy(fileInfo.absoluteFilePath(), destPath);
+							}
+						}
+						refreshMedia(true);
+						int idx = ui->comboBox_Video->findText(fileInfo.fileName());
+						if (idx > 0) {
+							ui->comboBox_Video->setCurrentIndex(idx);
+						}
+					}
 					else if(QUSongSupport::allowedAudioFiles().contains(fileScheme, Qt::CaseInsensitive)) {
 						if (fileInfo.exists()) {
 							defaultDir = fileInfo.absolutePath();
@@ -954,13 +1012,13 @@ void QUMainWindow::on_pushButton_BrowseSubtitles_clicked()
 			timeLineMap.insert(-8, QString("#CREATOR:%1").arg(ui->lineEdit_Creator->text()));
 		}
 		timeLineMap.insert(-7, QString("#MP3:%1").arg(ui->lineEdit_MP3->text()));
-		if (!ui->comboBox_Cover->currentText().isEmpty()) {
+		if (!ui->comboBox_Cover->currentText().isEmpty() && ui->comboBox_Cover->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-6, QString("#COVER:%1").arg(ui->comboBox_Cover->currentText()));
 		}
-		if (!ui->comboBox_Background->currentText().isEmpty()) {
+		if (!ui->comboBox_Background->currentText().isEmpty() && ui->comboBox_Background->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-5, QString("#BACKGROUND:%1").arg(ui->comboBox_Background->currentText()));
 		}
-		if (!ui->comboBox_Video->currentText().isEmpty()) {
+		if (!ui->comboBox_Video->currentText().isEmpty() && ui->comboBox_Video->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-4, QString("#VIDEO:%1").arg(ui->comboBox_Video->currentText()));
 		}
 		timeLineMap.insert(-2, QString("#BPM:%1").arg(ui->doubleSpinBox_BPM->text()));
@@ -1273,32 +1331,7 @@ void QUMainWindow::handleMP3() {
 	ui->label_TimeToRun->setText(QString("-%1:%2").arg(minutesToRun).arg(secondsToRun, 2, 10, QChar('0')));
 	ui->label_PreviewTimeToRun->setText(QString("-%1:%2").arg(minutesToRun).arg(secondsToRun, 2, 10, QChar('0')));
 
-	// add all image files to cover/background combobox
-	QStringList imageFiles = QDir(defaultDir).entryList(QUSongSupport::allowedImageFiles());
-
-	ui->comboBox_Cover->clear();
-	ui->comboBox_Cover->addItem("");
-	ui->comboBox_Cover->addItems(imageFiles);
-	ui->comboBox_Background->clear();
-	ui->comboBox_Background->addItem("");
-	ui->comboBox_Background->addItems(imageFiles);
-	if (imageFiles.length() == 1) {
-		ui->comboBox_Cover->setCurrentIndex(1);
-		ui->comboBox_Background->setCurrentIndex(1);
-	}
-	else {
-		ui->comboBox_Cover->setCurrentIndex(2);
-		ui->comboBox_Background->setCurrentIndex(1);
-	}
-
-	// add all video files to video combobox
-	QStringList videoFiles = QDir(defaultDir).entryList(QUSongSupport::allowedVideoFiles());
-	ui->comboBox_Video->clear();
-	ui->comboBox_Video->addItem("");
-	ui->comboBox_Video->addItems(videoFiles);
-	if (videoFiles.length() > 0) {
-		ui->comboBox_Video->setCurrentIndex(1);
-	}
+	refreshMedia(false);
 
 	BPMFromMP3 = BASS_FX_BPM_DecodeGet(_mediaStream, 0, MP3LengthTime, 0, BASS_FX_BPM_BKGRND, NULL, 0);
 	if (BPMFromMP3 == 0) {
@@ -1404,6 +1437,9 @@ void QUMainWindow::handleMP3() {
 	ui->label_Video->setEnabled(enabled);
 	ui->comboBox_Video->setEnabled(enabled);
 	ui->label_VideoSet->setEnabled(enabled);
+	if (refreshMediaAction) {
+		refreshMediaAction->setEnabled(enabled);
+	}
 	ui->label_BPMIcon->setEnabled(enabled);
 	ui->doubleSpinBox_BPM->setEnabled(enabled);
 	ui->label_BPM->setEnabled(enabled);
@@ -2343,6 +2379,10 @@ void QUMainWindow::checkForUpdate()
 
 void QUMainWindow::on_comboBox_Cover_currentTextChanged(const QString &cover)
 {
+	if (cover == tr("[Refresh...]")) {
+		return;
+	}
+	lastSelectedCover = cover;
 	if(!cover.isEmpty()) {
 		ui->label_CoverSet->setPixmap(QPixmap(":/icons/path_ok.png"));
 	}
@@ -2353,6 +2393,10 @@ void QUMainWindow::on_comboBox_Cover_currentTextChanged(const QString &cover)
 
 void QUMainWindow::on_comboBox_Background_currentTextChanged(const QString &background)
 {
+	if (background == tr("[Refresh...]")) {
+		return;
+	}
+	lastSelectedBackground = background;
 	if(!background.isEmpty()) {
 		ui->label_BackgroundSet->setPixmap(QPixmap(":/icons/path_ok.png"));
 	}
@@ -2363,10 +2407,138 @@ void QUMainWindow::on_comboBox_Background_currentTextChanged(const QString &back
 
 void QUMainWindow::on_comboBox_Video_currentTextChanged(const QString &video)
 {
+	if (video == tr("[Refresh...]")) {
+		return;
+	}
+	lastSelectedVideo = video;
 	if(!video.isEmpty())
 		ui->label_VideoSet->setPixmap(QPixmap(":/icons/path_ok.png"));
 	else
 		ui->label_VideoSet->setPixmap(QPixmap(":/icons/path_error.png"));
+}
+
+void QUMainWindow::refreshMedia(bool preserveSelections)
+{
+	if (!fileInfo_MP3 || !fileInfo_MP3->exists()) {
+		return;
+	}
+
+	QString songDir = fileInfo_MP3->absolutePath();
+	defaultDir = songDir;
+
+	QStringList imageFiles = QDir(songDir).entryList(QUSongSupport::allowedImageFiles());
+	QStringList videoFiles = QDir(songDir).entryList(QUSongSupport::allowedVideoFiles());
+
+	QString prevCover = (ui->comboBox_Cover->currentText() != tr("[Refresh...]")) ? ui->comboBox_Cover->currentText() : lastSelectedCover;
+	QString prevBackground = (ui->comboBox_Background->currentText() != tr("[Refresh...]")) ? ui->comboBox_Background->currentText() : lastSelectedBackground;
+	QString prevVideo = (ui->comboBox_Video->currentText() != tr("[Refresh...]")) ? ui->comboBox_Video->currentText() : lastSelectedVideo;
+
+	const QString refreshLabel = tr("[Refresh...]");
+	QIcon reloadIcon = style()->standardIcon(QStyle::SP_BrowserReload);
+
+	// Populate Cover combobox
+	ui->comboBox_Cover->blockSignals(true);
+	ui->comboBox_Cover->clear();
+	ui->comboBox_Cover->addItem("");
+	ui->comboBox_Cover->addItems(imageFiles);
+	ui->comboBox_Cover->addItem(reloadIcon, refreshLabel);
+
+	// Populate Background combobox
+	ui->comboBox_Background->blockSignals(true);
+	ui->comboBox_Background->clear();
+	ui->comboBox_Background->addItem("");
+	ui->comboBox_Background->addItems(imageFiles);
+	ui->comboBox_Background->addItem(reloadIcon, refreshLabel);
+
+	// Populate Video combobox
+	ui->comboBox_Video->blockSignals(true);
+	ui->comboBox_Video->clear();
+	ui->comboBox_Video->addItem("");
+	ui->comboBox_Video->addItems(videoFiles);
+	ui->comboBox_Video->addItem(reloadIcon, refreshLabel);
+
+	// --- Cover Selection ---
+	int coverIndex = -1;
+	if (preserveSelections && !prevCover.isEmpty()) {
+		coverIndex = ui->comboBox_Cover->findText(prevCover);
+	}
+	if (coverIndex <= 0 && !imageFiles.isEmpty()) {
+		for (int i = 0; i < imageFiles.size(); ++i) {
+			const QString &fn = imageFiles[i];
+			if (fn.contains("[CO]", Qt::CaseInsensitive) || fn.contains("cover", Qt::CaseInsensitive)) {
+				coverIndex = i + 1;
+				break;
+			}
+		}
+		if (coverIndex <= 0) {
+			if (imageFiles.length() == 1) {
+				coverIndex = 1;
+			} else if (imageFiles.length() > 1) {
+				coverIndex = 2;
+			}
+		}
+	}
+	if (coverIndex > 0 && coverIndex < ui->comboBox_Cover->count() - 1) {
+		ui->comboBox_Cover->setCurrentIndex(coverIndex);
+		lastSelectedCover = ui->comboBox_Cover->currentText();
+	} else {
+		ui->comboBox_Cover->setCurrentIndex(0);
+		lastSelectedCover.clear();
+	}
+
+	// --- Background Selection ---
+	int bgIndex = -1;
+	if (preserveSelections && !prevBackground.isEmpty()) {
+		bgIndex = ui->comboBox_Background->findText(prevBackground);
+	}
+	if (bgIndex <= 0 && !imageFiles.isEmpty()) {
+		for (int i = 0; i < imageFiles.size(); ++i) {
+			const QString &fn = imageFiles[i];
+			if (fn.contains("[BG]", Qt::CaseInsensitive) || fn.contains("background", Qt::CaseInsensitive) || fn.contains("back", Qt::CaseInsensitive)) {
+				bgIndex = i + 1;
+				break;
+			}
+		}
+		if (bgIndex <= 0) {
+			bgIndex = 1;
+		}
+	}
+	if (bgIndex > 0 && bgIndex < ui->comboBox_Background->count() - 1) {
+		ui->comboBox_Background->setCurrentIndex(bgIndex);
+		lastSelectedBackground = ui->comboBox_Background->currentText();
+	} else {
+		ui->comboBox_Background->setCurrentIndex(0);
+		lastSelectedBackground.clear();
+	}
+
+	// --- Video Selection ---
+	int videoIndex = -1;
+	if (preserveSelections && !prevVideo.isEmpty()) {
+		videoIndex = ui->comboBox_Video->findText(prevVideo);
+	}
+	if (videoIndex <= 0 && !videoFiles.isEmpty()) {
+		videoIndex = 1;
+	}
+	if (videoIndex > 0 && videoIndex < ui->comboBox_Video->count() - 1) {
+		ui->comboBox_Video->setCurrentIndex(videoIndex);
+		lastSelectedVideo = ui->comboBox_Video->currentText();
+	} else {
+		ui->comboBox_Video->setCurrentIndex(0);
+		lastSelectedVideo.clear();
+	}
+
+	ui->comboBox_Cover->blockSignals(false);
+	ui->comboBox_Background->blockSignals(false);
+	ui->comboBox_Video->blockSignals(false);
+
+	// Update indicator pixmaps
+	on_comboBox_Cover_currentTextChanged(ui->comboBox_Cover->currentText());
+	on_comboBox_Background_currentTextChanged(ui->comboBox_Background->currentText());
+	on_comboBox_Video_currentTextChanged(ui->comboBox_Video->currentText());
+
+	if (preserveSelections) {
+		logSrv->add(tr("Media refreshed: %1 image(s), %2 video(s) found.").arg(imageFiles.count()).arg(videoFiles.count()), QU::Information);
+	}
 }
 
 void QUMainWindow::montyTalk(bool force) {

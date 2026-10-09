@@ -138,6 +138,7 @@ private:
 	double BASS_Position();
 	void BASS_SetPosition(double seconds);
 	void handleMP3();
+	void refreshMedia(bool preserveSelections = true);
 	QFileInfo* fileInfo_MP3;
 	QFileInfo* fileInfo_SRT;
 	void keyPressEvent(QKeyEvent *event);
@@ -166,6 +167,7 @@ private:
 	QAction *checkForUpdateAction;
 	QMenu *aboutMenu;
 	QAction *generateFreestyleTextFilesActions;
+	QAction *refreshMediaAction;
 	QMenu *extrasMenu;
 	QAction *showMontyAction;
 	QMenu *helpMenu;
@@ -184,6 +186,9 @@ private:
 	double MP3LengthTime;
 	QString defaultDir;
 	QMap<double, QString> timeLineMap;
+	QString lastSelectedCover;
+	QString lastSelectedBackground;
+	QString lastSelectedVideo;
 	void updateOutputLyrics();
 };
 
