@@ -124,6 +124,7 @@ private:
 	float sampleRate;
 	bool firstNote;
 	bool isFirstKeyPress;
+	bool isTapping = false;
 	bool addLinebreak = false;
 	QString cleanLyrics(QString);
 	void splitLyricsIntoSyllables();

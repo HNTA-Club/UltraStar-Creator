@@ -175,6 +175,13 @@ void QUMainWindow::initWindow() {
 	ui->comboBox_Genre->addItem("");
 	ui->comboBox_Genre->addItems(QUSongSupport::availableSongGenres());
 
+	ui->pushButton_PlayPause->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+	ui->pushButton_PlayPause->setToolTip(tr("Start tapping (Play) or Pause (Ctrl+P, Space)"));
+	ui->pushButton_UndoTap->setShortcut(QKeySequence(Qt::Key_X));
+	ui->pushButton_UndoTap->setToolTip(tr("Undo last tap (X)"));
+	ui->horizontalSlider_PlaybackSpeed->setFocusPolicy(Qt::NoFocus);
+	ui->horizontalSlider_MP3->setFocusPolicy(Qt::NoFocus);
+
 	/*
 	resize(1000, 500);
 
@@ -509,6 +516,12 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 	}
 	else if (state == playing) {
 		state = QUMainWindow::paused;
+		if (isTapping) {
+			isTapping = false;
+			ui->pushButton_Tap->setDown(false);
+			ui->pushButton_Tap->setCursor(Qt::OpenHandCursor);
+		}
+		isFirstKeyPress = true;
 		ui->pushButton_PlayPause->setIcon(QIcon(":/player/play.png"));
 		ui->pushButton_Tap->setDisabled(true);
 		ui->pushButton_NextSyllable1->setDisabled(true);
@@ -575,6 +588,7 @@ QString QUMainWindow::cleanLyrics(QString rawLyricsString) {
 
 void QUMainWindow::on_pushButton_Tap_pressed()
 {
+	isTapping = true;
 	currentNoteStartTime = BASS_Position()*1000; // milliseconds
 
 	// conversion from milliseconds [ms] to quarter beats [qb]: time [ms] * BPM [qb/min] * 1/60 [min/s] * 1/1000 [s/ms]
@@ -587,6 +601,12 @@ void QUMainWindow::on_pushButton_Tap_pressed()
 
 void QUMainWindow::on_pushButton_Tap_released()
 {
+	if (!isTapping) {
+		ui->pushButton_Tap->setCursor(Qt::OpenHandCursor);
+		return;
+	}
+	isTapping = false;
+
 	double currentNoteTimeLength = BASS_Position()*1000 - currentNoteStartTime;
 	ui->pushButton_Tap->setCursor(Qt::OpenHandCursor);
 	lyricsProgressBar->setValue(lyricsProgressBar->value()+1);
@@ -677,6 +697,8 @@ void QUMainWindow::on_pushButton_Stop_clicked()
 {
 	if (state == playing || state == paused) {
 		state = QUMainWindow::stopped;
+		isTapping = false;
+		isFirstKeyPress = true;
 		QMainWindow::statusBar()->showMessage(tr("State: stopped."));
 		BASS_StopAndFree();
 		ui->label_TimeElapsed->setText("0:00");
@@ -1492,6 +1514,11 @@ void QUMainWindow::setPlaybackSpeed(int value)
 		float tempo = static_cast<float>(value - 100);
 		BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, tempo);
 	}
+
+	if (state == playing) {
+		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
+		isFirstKeyPress = true;
+	}
 }
 
 void QUMainWindow::aboutBASS()
@@ -1584,6 +1611,8 @@ void QUMainWindow::on_pushButton_Reset_clicked()
 		lyricsProgressBar->hide();
 		state = QUMainWindow::initialized;
 		previewState = QUMainWindow::initialized;
+		isTapping = false;
+		isFirstKeyPress = true;
 		numSyllables = 0;
 		firstNoteStartBeat = 0;
 		currentNoteBeatLength = 0;
@@ -1620,6 +1649,15 @@ void QUMainWindow::on_pushButton_Reset_clicked()
 
 void QUMainWindow::on_pushButton_UndoTap_clicked()
 {
+	if (isTapping) {
+		isTapping = false;
+		isFirstKeyPress = true;
+		ui->pushButton_Tap->setDown(false);
+		ui->pushButton_Tap->setCursor(Qt::OpenHandCursor);
+		ui->pushButton_Tap->clearFocus();
+		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
+	}
+
 	QMutableMapIterator<double, QString> i(timeLineMap);
 
 	if (currentSyllableIndex > 0) {
@@ -1650,6 +1688,8 @@ void QUMainWindow::on_pushButton_UndoTap_clicked()
 			double preRollTime = 1.0; // step 1.0 second before the erased note
 			BASS_SetPosition(qMax(0.0, (erasedNoteStartMs / 1000.0) - preRollTime));
 		}
+	} else if (firstNote) {
+		BASS_SetPosition(0.0);
 	}
 }
 
@@ -1714,19 +1754,67 @@ void QUMainWindow::splitLyricsIntoSyllables()
 }
 
 void QUMainWindow::keyPressEvent(QKeyEvent *event) {
-	if (state == QUMainWindow::playing && isFirstKeyPress) {
-		isFirstKeyPress = false;
-		switch(event->key()) {
-		case Qt::Key_V:
+	QWidget *fw = QApplication::focusWidget();
+	if (fw && (qobject_cast<QLineEdit*>(fw) ||
+	           qobject_cast<QTextEdit*>(fw) ||
+	           qobject_cast<QPlainTextEdit*>(fw))) {
+		QWidget::keyPressEvent(event);
+		return;
+	}
+
+	if (event->modifiers() & (Qt::MetaModifier | Qt::AltModifier | Qt::ControlModifier)) {
+		QWidget::keyPressEvent(event);
+		return;
+	}
+
+	if (event->key() == Qt::Key_X) {
+		if (event->isAutoRepeat()) {
 			event->ignore();
-			QUMainWindow::on_pushButton_Tap_pressed();
-			break;
-		case Qt::Key_X:
+			return;
+		}
+		if (ui->pushButton_UndoTap->isEnabled() || isTapping) {
 			event->ignore();
 			QUMainWindow::on_pushButton_UndoTap_clicked();
-			break;
-		default: QWidget::keyPressEvent(event);
+			return;
 		}
+	}
+
+	if (state == QUMainWindow::playing) {
+		switch(event->key()) {
+		case Qt::Key_Space:
+		case Qt::Key_V:
+			if (event->isAutoRepeat()) {
+				event->ignore();
+				return;
+			}
+			if (isFirstKeyPress) {
+				isFirstKeyPress = false;
+				event->ignore();
+				if (!ui->pushButton_Tap->hasFocus()) {
+					ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
+				}
+				QUMainWindow::on_pushButton_Tap_pressed();
+			}
+			break;
+		default:
+			QWidget::keyPressEvent(event);
+		}
+	}
+	else if ((state == QUMainWindow::initialized || state == QUMainWindow::paused) && isFirstKeyPress) {
+		switch(event->key()) {
+		case Qt::Key_Space:
+		case Qt::Key_V:
+			if (ui->pushButton_PlayPause->isEnabled()) {
+				event->ignore();
+				isFirstKeyPress = true;
+				on_pushButton_PlayPause_clicked();
+				return;
+			}
+			break;
+		default:
+			break;
+		}
+		QWidget::keyPressEvent(event);
 	}
 	else {
 		QWidget::keyPressEvent(event);
@@ -1734,17 +1822,38 @@ void QUMainWindow::keyPressEvent(QKeyEvent *event) {
 }
 
 void QUMainWindow::keyReleaseEvent(QKeyEvent *event) {
-	if (state == QUMainWindow::playing && !isFirstKeyPress) {
-		isFirstKeyPress = true;
+	QWidget *fw = QApplication::focusWidget();
+	if (fw && (qobject_cast<QLineEdit*>(fw) ||
+	           qobject_cast<QTextEdit*>(fw) ||
+	           qobject_cast<QPlainTextEdit*>(fw))) {
+		QWidget::keyReleaseEvent(event);
+		return;
+	}
+
+	if (event->modifiers() & (Qt::MetaModifier | Qt::AltModifier | Qt::ControlModifier)) {
+		QWidget::keyReleaseEvent(event);
+		return;
+	}
+
+	if (state == QUMainWindow::playing) {
 		switch(event->key()) {
+			case Qt::Key_Space:
 			case Qt::Key_V:
+				if (event->isAutoRepeat()) {
+					event->ignore();
+					return;
+				}
+				isFirstKeyPress = true;
 				event->ignore();
 				QUMainWindow::on_pushButton_Tap_released();
-			default: QWidget::keyPressEvent(event);
+				break;
+			default:
+				QWidget::keyReleaseEvent(event);
+				break;
 		}
 	}
 	else {
-		QWidget::keyPressEvent(event);
+		QWidget::keyReleaseEvent(event);
 	}
 }
 
