@@ -69,26 +69,32 @@ elif [[ "$PLATFORM" == "macos" ]]; then
          qt
 
 elif [[ "$PLATFORM" == "linux" ]]; then
-    echo "==> Installing apt dependencies..."
-    sudo apt update -qq
-    sudo apt install -y \
-        libgl1-mesa-dev \
-        build-essential \
-        qt6-base-dev \
-        qt6-tools-dev \
-        qt6-tools-dev-tools \
-        libtag1-dev \
-        libcld2-dev \
-        libxcb-icccm4 \
-        libxcb-image0 \
-        libxcb-keysyms1 \
-        libxcb-render-util0 \
-        libxcb-xinerama0 \
-        libxcb-xkb-dev \
-        libxkbcommon-x11-0 \
-        libxcb-cursor0 \
-        libgtk2.0-dev \
-        libfuse2
+    if command -v qmake6 &>/dev/null && pkg-config --exists taglib &>/dev/null; then
+        echo "==> Linux dependencies already installed, skipping apt..."
+    else
+        echo "==> Installing apt dependencies..."
+        sudo apt update -qq
+        sudo apt install -y \
+            libgl1-mesa-dev \
+            build-essential \
+            qt6-base-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
+            libtag1-dev \
+            libcld2-dev \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xkb-dev \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libgtk2.0-dev \
+            libfuse2t64 \
+            unzip \
+            pkg-config
+    fi
 fi
 
 # --------------------------------------------------
@@ -157,7 +163,11 @@ download "$BASS_FX_URL" "$TEMP_DIR/$LIB_NAME.zip"
 extract_zip "$TEMP_DIR/$LIB_NAME.zip" "$TEMP_DIR/$LIB_NAME-tmp"
 
 mkdir -p "$INCLUDE_DIR/$LIB_NAME"
-cp -n "$TEMP_DIR/$LIB_NAME-tmp/bass_fx.h" "$INCLUDE_DIR/$LIB_NAME/" || true
+if [[ -f "$TEMP_DIR/$LIB_NAME-tmp/bass_fx.h" ]]; then
+    cp -n "$TEMP_DIR/$LIB_NAME-tmp/bass_fx.h" "$INCLUDE_DIR/$LIB_NAME/" || true
+elif [[ -f "$TEMP_DIR/$LIB_NAME-tmp/C/bass_fx.h" ]]; then
+    cp -n "$TEMP_DIR/$LIB_NAME-tmp/C/bass_fx.h" "$INCLUDE_DIR/$LIB_NAME/" || true
+fi
 
 if [[ "$PLATFORM" == "windows" ]]; then
     cp -n "$TEMP_DIR/$LIB_NAME-tmp/x64/$LIB_NAME.dll" "$LIB_DIR/" || true
@@ -310,7 +320,6 @@ if [[ "$PLATFORM" == "windows" ]]; then
     else
         log "$LIB_NAME already present in $LIB_DIR"
     fi
-fi
 
 elif [[ "$PLATFORM" == "macos" ]]; then
     log "Using brew installation of taglib"
