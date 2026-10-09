@@ -1,4 +1,4 @@
-﻿#include "main.h"
+#include "main.h"
 
 #include "QUMainWindow.h"
 #include "QULogService.h"
@@ -1633,13 +1633,23 @@ void QUMainWindow::on_pushButton_UndoTap_clicked()
 		lyricsProgressBar->setValue(lyricsProgressBar->value()-1);
 		i.toBack();
 		i.previous();
-		timeLineMap.remove(i.key());
+		double erasedNoteStartMs = i.key();
+		timeLineMap.remove(erasedNoteStartMs);
+
+		if (currentSyllableIndex > 0 && lyricsSyllableList[currentSyllableIndex - 1].endsWith("\n")) {
+			addLinebreak = true;
+		} else {
+			addLinebreak = false;
+		}
 
 		updateOutputLyrics();
-		
-		//BASS_SetPosition(timeLineMap.lastKey()/1000.0);
-		double undoTime = 1.0; // step 1 second back in MP3
-		BASS_SetPosition(qMax(BASS_Position() - undoTime, 0.0));
+
+		if (currentSyllableIndex == 0 || erasedNoteStartMs < 0.0) {
+			BASS_SetPosition(0.0);
+		} else {
+			double preRollTime = 1.0; // step 1.0 second before the erased note
+			BASS_SetPosition(qMax(0.0, (erasedNoteStartMs / 1000.0) - preRollTime));
+		}
 	}
 }
 
