@@ -556,6 +556,9 @@ void QUMainWindow::setDefaultPitch(int pitch) {
 
 
 QString QUMainWindow::cleanLyrics(QString rawLyricsString) {
+	// normalize Windows line endings
+	rawLyricsString.replace("\r\n", "\n").replace("\r", "\n");
+
 	// delete surplus space characters
 	rawLyricsString = rawLyricsString.replace(QRegularExpression(" {2,}"), " ");
 
@@ -567,15 +570,14 @@ QString QUMainWindow::cleanLyrics(QString rawLyricsString) {
 	rawLyricsString = rawLyricsString.replace("`", "'");
 	rawLyricsString = rawLyricsString.replace("'", "’");
 
-	// delete leading and trailing whitespace from each line, change line beginning to uppercase if selected
+	// delete leading and trailing whitespace from each line, omitting empty lines
 	QStringList rawLyricsStringList = rawLyricsString.split(QRegularExpression("\\n"));
 	QStringList lyricsStringList;
-	rawLyricsString.clear();
-	QStringListIterator lyricsLineIterator(rawLyricsStringList);
-	while (lyricsLineIterator.hasNext()) {
-		QString currentLine = lyricsLineIterator.next();
-		currentLine = currentLine.trimmed();
-		lyricsStringList.append(currentLine);
+	for (const QString &rawLine : rawLyricsStringList) {
+		QString currentLine = rawLine.trimmed();
+		if (!currentLine.isEmpty()) {
+			lyricsStringList.append(currentLine);
+		}
 	}
 	rawLyricsString = lyricsStringList.join("\n");
 
@@ -773,6 +775,7 @@ void QUMainWindow::dropEvent( QDropEvent* event ) {
 						if (file.open(QFile::ReadOnly | QFile::Text)) {
 							QTextStream lyrics(&file);
 							ui->plainTextEdit_InputLyrics->setPlainText(lyrics.readAll());
+							handleLyrics(ui->plainTextEdit_InputLyrics->toPlainText());
 						}
 					}
 					else if(QUSongSupport::allowedAudioFiles().contains(fileScheme, Qt::CaseInsensitive)) {
@@ -788,6 +791,7 @@ void QUMainWindow::dropEvent( QDropEvent* event ) {
 		}
 		else if (data->hasText()) {
 			ui->plainTextEdit_InputLyrics->setPlainText(data->text());
+			handleLyrics(ui->plainTextEdit_InputLyrics->toPlainText());
 		}
 	}
 }
@@ -1434,9 +1438,8 @@ void QUMainWindow::on_pushButton_GetLyrics_clicked() {
 }
 
 void QUMainWindow::handleLyrics(QString lyrics) {
-	if(determineLanguage(lyrics)) {
-		cleanAndSyllabifyLyrics(lyrics);
-	}
+	determineLanguage(lyrics);
+	cleanAndSyllabifyLyrics(lyrics);
 }
 
 bool QUMainWindow::determineLanguage(QString lyrics) {
@@ -1486,7 +1489,13 @@ void QUMainWindow::cleanAndSyllabifyLyrics(QString lyrics) {
 	QString cleanedLyrics = cleanLyrics(lyrics);
 	
 	// split lyrics into syllables
-	QString syllabifiedLyrics = syllabifyLyrics(cleanedLyrics, ui->comboBox_Language->currentData().toString());
+	QString language = ui->comboBox_Language->currentData().toString();
+	QString syllabifiedLyrics;
+	if (!language.isEmpty() && QFile::exists(getResourcesPath() + language + ".txt")) {
+		syllabifiedLyrics = syllabifyLyrics(cleanedLyrics, language);
+	} else {
+		syllabifiedLyrics = cleanedLyrics;
+	}
 	
 	ui->plainTextEdit_InputLyrics->setPlainText(syllabifiedLyrics);
 	
