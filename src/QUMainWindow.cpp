@@ -497,10 +497,9 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 
 		_mediaStream = BASS_FX_TempoCreate(_mediaStream, BASS_FX_FREESOURCE);
 
-		// playing slower results in lower pitch, just like a record played at a lower speed
-		// playing slower while preserving pitch only works well for small changes in speed
 		BASS_ChannelGetAttribute(_mediaStream, BASS_ATTRIB_FREQ, &sampleRate);
-		if (BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO_FREQ, sampleRate*ui->horizontalSlider_PlaybackSpeed->value()/100)) {
+		float tempo = static_cast<float>(ui->horizontalSlider_PlaybackSpeed->value() - 100);
+		if (BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, tempo)) {
 			BASS_Play();
 			updateTime();
 		}
@@ -539,7 +538,7 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 }
 
 void QUMainWindow::setDefaultPitch(int pitch) {
-	//
+	Q_UNUSED(pitch);
 }
 
 
@@ -1487,10 +1486,11 @@ void QUMainWindow::cleanAndSyllabifyLyrics(QString lyrics) {
 
 void QUMainWindow::setPlaybackSpeed(int value)
 {
-	ui->label_PlaybackSpeedPercentage->setText(QString("%1 \%").arg(QString::number(value)));
+	ui->label_PlaybackSpeedPercentage->setText(QString("%1 %").arg(QString::number(value)));
 
 	if (state == playing || state == paused) {
-		BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO_FREQ, sampleRate*ui->horizontalSlider_PlaybackSpeed->value()/100);
+		float tempo = static_cast<float>(value - 100);
+		BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, tempo);
 	}
 }
 
