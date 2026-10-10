@@ -320,7 +320,7 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-*-UltraStar-Creator-portable/*, MAC-*-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
+          artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-ARM-UltraStar-Creator-portable/*, MAC-ARM-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
           draft: true
           generateReleaseNotes: true
           artifactErrorsFailBuild: true
