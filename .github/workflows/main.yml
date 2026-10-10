@@ -47,7 +47,7 @@ jobs:
           $repoRoot = "${{ github.workspace }}"
           New-Item -Force -ItemType Directory "$repoRoot\include\taglib"
           New-Item -Force -ItemType Directory "$repoRoot\lib\windows"
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\tag.dll" "$repoRoot\lib\windows" -Force
+          Copy-Item "C:\vcpkg\installed\x64-windows\bin\*.dll" "$repoRoot\lib\windows" -Force
           Copy-Item "C:\vcpkg\installed\x64-windows\lib\tag.lib" "$repoRoot\lib\windows" -Force
           Copy-Item "C:\vcpkg\installed\x64-windows\include\taglib\*" "$repoRoot\include\taglib" -Force -Recurse
       - name: Download, extract and copy BASS library
@@ -325,4 +325,6 @@ jobs:
           artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-ARM-UltraStar-Creator-portable/*, MAC-ARM-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
           draft: true
           generateReleaseNotes: true
+          allowUpdates: true
+          replacesArtifacts: true
           artifactErrorsFailBuild: true

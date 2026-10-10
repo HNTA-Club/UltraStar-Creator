@@ -176,6 +176,8 @@ win32 {
 	QMAKE_POST_LINK += $${QMAKE_COPY} $$shell_path(../lib/windows/bass_fx.dll) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)
 	QMAKE_POST_LINK += $${QMAKE_COPY} $$shell_path(../lib/windows/cld2.dll) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)
  	QMAKE_POST_LINK += $${QMAKE_COPY} $$shell_path(../lib/windows/tag.dll) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)
+	QMAKE_POST_LINK += if exist $$shell_path(../lib/windows/z.dll) $${QMAKE_COPY} $$shell_path(../lib/windows/z.dll) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)
+	QMAKE_POST_LINK += if exist $$shell_path(../lib/windows/zlib1.dll) $${QMAKE_COPY} $$shell_path(../lib/windows/zlib1.dll) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)
 
 	# Add syllabification dictionaries
 	QMAKE_POST_LINK += $${QMAKE_COPY} $$shell_path(../syllabification/*.txt) $$shell_path($${DESTDIR}) $$escape_expand(\\n\\t)

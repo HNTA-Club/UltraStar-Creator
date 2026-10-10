@@ -309,7 +309,7 @@ if [[ "$PLATFORM" == "windows" ]]; then
             mkdir -p "$INCLUDE_DIR/$LIB_NAME"
             cp -r "$VCPKG_INSTALLED/include/taglib/"* "$INCLUDE_DIR/$LIB_NAME/"
 
-            cp -f "$VCPKG_INSTALLED/bin/tag.dll" "$LIB_DIR/"
+            cp -f "$VCPKG_INSTALLED/bin/"*.dll "$LIB_DIR/"
             cp -f "$VCPKG_INSTALLED/lib/tag.lib" "$LIB_DIR/"
             
             log "TagLib successfully copied from vcpkg."
