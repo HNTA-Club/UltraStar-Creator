@@ -9,13 +9,35 @@
 ### 1. About
 UltraStar-Creator (usc) is a free and open source song creation tool using Qt. It should be compilable and runnable on Windows, Linux and Mac OS.
 
-### 2. Release Notes
-(under construction)
+### 2. Releases & Versioning
+This repository is an enhanced distribution of UltraStar-Creator maintained by **HNTA-Club**.
 
-### 3. Command-Line Parameters
-(under construction)
+#### Versioning Scheme
+Releases follow [Semantic Versioning](https://semver.org/) extended with a fork identifier:
+```text
+v<upstream-base>-takai.<patch>
+```
+Example: **`v1.4.0-takai.1`**
+- **Upstream Base (`1.4.0`)**: Tracks the modern Qt 6 port and unreleased improvements from upstream master, plus substantial feature additions.
+- **Fork Suffix (`-takai.<patch>`)**: Identifies releases specific to this distribution. This ensures version tags never collide with upstream tags and clearly indicates the build origin to end users.
+- **Automated CI/CD**: Pushing a version tag triggers GitHub Actions to compile and package standalone binaries across Windows (installer & portable zip), macOS (Apple Silicon & Intel DMGs), and Linux (AppImage), published to [GitHub Releases](https://github.com/HNTA-Club/UltraStar-Creator/releases).
 
-### 4. Controls
+### 3. Controls & Hotkeys
+
+| Key / Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| <kbd>Space</kbd> / <kbd>V</kbd> | **Tap Syllable / Start** | Hold down for the duration of the syllable. Also starts/resumes playback. |
+| <kbd>X</kbd> | **Undo Syllable** | Erases the last tapped syllable and rewinds audio by 1.0s. |
+| <kbd>Z</kbd> | **Undo Row (Live)** | Erases all words on the current row and rewinds audio by 2.0s to re-take in rhythm. |
+| <kbd>Ctrl+Z</kbd> | **Undo Row & Pause** | Erases all words on the current row, rewinds by 2.0s, and pauses playback. |
+| <kbd>Ctrl+P</kbd> | **Play / Pause** | Toggles audio playback. |
+| <kbd>S</kbd> | **Stop** | Stops playback and finalizes tapping. |
+| <kbd>Ctrl+R</kbd> | **Reset Song** | Resets tapping progress and rewinds to the beginning (when stopped). |
+| <kbd>Ctrl+S</kbd> | **Save** | Opens the save dialog to write the UltraStar `.txt` file. |
+| <kbd>F5</kbd> | **Refresh Media** | Rescans the directory to update cover, background, video, and audio files. |
+| <kbd>Ctrl+Q</kbd> | **Exit** | Quits the application. |
+
+### 4. Command-Line Parameters
 (under construction)
 
 ### 5. Build and Run

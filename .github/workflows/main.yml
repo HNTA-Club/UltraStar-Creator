@@ -2,9 +2,17 @@ name: Build
 
 on:
   push:
-    branches: "*"
+    branches:
+      - "master"
+      - "develop"
     tags:
-      - "[0-9].[0-9].[0-9]"
+      - "v*"
+      - "[0-9].*"
+  pull_request:
+    branches:
+      - "master"
+      - "develop"
+  workflow_dispatch:
 
 jobs:
   build_windows:
@@ -325,4 +333,5 @@ jobs:
         with:
           artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-x86-UltraStar-Creator-portable/*, MAC-ARM-UltraStar-Creator-portable/*, MAC-x86-UltraStar-Creator-image/*, MAC-ARM-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
           draft: true
+          generateReleaseNotes: true
           artifactErrorsFailBuild: true

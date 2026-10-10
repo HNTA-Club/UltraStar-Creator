@@ -1,3 +1,24 @@
+<------------------------------------->
+< Changelog (1.3.1 to 1.4.0 - Takai)  >
+<------------------------------------->
+~#~#~#~#~#~#~#~#~#~#~#~#~#~#  NEW FEATURES  #~#~#~#~#~#~#~#~#~#~#~#~#~#~
+MAPPING & CONTROLS
+* Line undo hotkey (Z): instantly erases all mapped syllables on the current row and rewinds audio 2.0s to re-attempt in rhythm.
+* Line undo & pause hotkey (CTRL-Z): erases current row, rewinds 2.0s, and pauses playback to allow taking a breather.
+* Start mapping via keyboard (Space / V): starting playback from initial or paused state automatically focuses the tap area.
+* Playback speed pitch preservation: adjusting playback tempo slider now uses BASS_FX tempo scaling to preserve original vocal pitch.
+* Refresh media action (F5): dynamically refreshes artwork, backgrounds, video, and audio without reloading the app.
+
+MASCOT
+* Sirkka the Cricket replaces Monty the Mammoth with updated graphics and messages.
+
+~#~#~#~#~#~#~#~#~#~#~#~#~#~#~#  CHANGES & FIXES  ~#~#~#~#~#~#~#~#~#~#~#~#~#~#~#~
+* Fixed stale syllable and mapping state leakage when opening a new song.
+* Cleaned up pasted lyrics by automatically trimming trailing empty rows and normalizing line breaks.
+* Single-syllable undo (X) now backtracks 1.0s before the erased note.
+* Reset button shortcut aligned to CTRL-R.
+* Build modernization: ported to Qt 6.8 with 64-bit MSVC 2022 toolchain.
+
 <---------------------------->
 < Changelog (1.1.1 to 1.2.0) >
 <---------------------------->
