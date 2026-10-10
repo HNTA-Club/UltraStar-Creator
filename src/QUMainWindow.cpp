@@ -82,7 +82,7 @@ QUMainWindow::QUMainWindow(QWidget *parent): QMainWindow(parent), ui(new Ui::QUM
 	if (firstRun) {
 		QUMessageBox::information(0,
 								  QObject::tr("Welcome to UltraStar Creator!"),
-								  QObject::tr("This tool enables you to <b>rapidly</b> create UltraStar text files <b>from scratch</b>.<br><br>To get started, simply chose a <b>song file</b> in MP3 or OGG format, insert the <b>song lyrics</b> from a file or the clipboard and divide them into syllables with '+'.<br><br><b>Important song meta information</b> such as <b>BPM</b> and <b>GAP</b> are determined <b>automatically</b> while the <b>ID3 tag</b> is used to fill in additional song details, if available.<br><br>To <b>start tapping</b>, hit the play/pause button (Keyboard: CTRL-P). Keep the <b>tap button</b> (keyboard: space bar) pressed for as long as the current syllable is sung to tap a note. <b>Undo</b> the last tap with the undo button (Keyboard: x), <b>stop tapping</b> with the stop button (Keyboard: CTRL-S), <b>restart</b> from the beginning with the reset button (Keyboard: CTRL-R). When finished, <b>save</b> the tapped song using the save button (CTRL-S).<br><br>Having successfully tapped a song, use the UltraStar internal editor for <b>finetuning the timings</b>, setting <b>note pitches</b> and <b>golden</b> or <b>freestyle notes</b>.<br><br><b>Happy creating!</b>"),
+								  QObject::tr("This tool enables you to <b>rapidly</b> create UltraStar text files <b>from scratch</b>.<br><br>To get started, simply chose a <b>song file</b> in MP3 or OGG format, insert the <b>song lyrics</b> from a file or the clipboard and divide them into syllables with '+'.<br><br><b>Important song meta information</b> such as <b>BPM</b> and <b>GAP</b> are determined <b>automatically</b> while the <b>ID3 tag</b> is used to fill in additional song details, if available.<br><br>To <b>start tapping</b>, hit the play/pause button (Keyboard: CTRL-P). Keep the <b>tap button</b> (keyboard: space bar) pressed for as long as the current syllable is sung to tap a note. <b>Undo</b> the last tap with the undo button (Keyboard: x), <b>undo the current row</b> (Keyboard: z), <b>undo row & pause</b> (Keyboard: CTRL-Z), <b>stop tapping</b> with the stop button (Keyboard: CTRL-S), <b>restart</b> from the beginning with the reset button (Keyboard: CTRL-R). When finished, <b>save</b> the tapped song using the save button (CTRL-S).<br><br>Having successfully tapped a song, use the UltraStar internal editor for <b>finetuning the timings</b>, setting <b>note pitches</b> and <b>golden</b> or <b>freestyle notes</b>.<br><br><b>Happy creating!</b>"),
 								  BTN << ":/icons/accept.png" << QObject::tr("Okay. Let's go!"),
 								  550,
 								  0);
@@ -197,7 +197,7 @@ void QUMainWindow::initWindow() {
 	ui->pushButton_PlayPause->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
 	ui->pushButton_PlayPause->setToolTip(tr("Start tapping (Play) or Pause (Ctrl+P, Space)"));
 	ui->pushButton_UndoTap->setShortcut(QKeySequence(Qt::Key_X));
-	ui->pushButton_UndoTap->setToolTip(tr("Undo last tap (X)"));
+	ui->pushButton_UndoTap->setToolTip(tr("Undo last tap (X) | Undo line (Z) | Undo line & pause (Ctrl+Z)"));
 	ui->horizontalSlider_PlaybackSpeed->setFocusPolicy(Qt::NoFocus);
 	ui->horizontalSlider_MP3->setFocusPolicy(Qt::NoFocus);
 
@@ -1777,6 +1777,130 @@ void QUMainWindow::on_pushButton_UndoTap_clicked()
 	}
 }
 
+void QUMainWindow::undoRow(bool pauseAfterUndo) {
+	if (state != playing && state != paused) {
+		return;
+	}
+
+	if (isTapping) {
+		isTapping = false;
+		isFirstKeyPress = true;
+		ui->pushButton_Tap->setDown(false);
+		ui->pushButton_Tap->setCursor(Qt::OpenHandCursor);
+		ui->pushButton_Tap->clearFocus();
+		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
+	}
+
+	if (currentSyllableIndex <= 0) {
+		BASS_SetPosition(0.0);
+		if (pauseAfterUndo && state == playing) {
+			state = QUMainWindow::paused;
+			ui->pushButton_PlayPause->setIcon(QIcon(":/player/play.png"));
+			ui->pushButton_Tap->setDisabled(true);
+			ui->pushButton_NextSyllable1->setDisabled(true);
+			ui->pushButton_NextSyllable2->setDisabled(true);
+			ui->pushButton_NextSyllable3->setDisabled(true);
+			ui->pushButton_NextSyllable4->setDisabled(true);
+			ui->pushButton_NextSyllable5->setDisabled(true);
+			BASS_Pause();
+			isFirstKeyPress = true;
+		}
+		return;
+	}
+
+	int lastMappedIdx = currentSyllableIndex - 1;
+	int rowStartIdx = lastMappedIdx;
+	while (rowStartIdx > 0 && !lyricsSyllableList[rowStartIdx - 1].endsWith("\n")) {
+		rowStartIdx--;
+	}
+
+	int numNotesToDelete = currentSyllableIndex - rowStartIdx;
+	if (numNotesToDelete <= 0) {
+		return;
+	}
+
+	QMutableMapIterator<double, QString> i(timeLineMap);
+	i.toBack();
+	double earliestNoteStartMs = -1.0;
+	for (int k = 0; k < numNotesToDelete; ++k) {
+		if (i.hasPrevious()) {
+			i.previous();
+			if (i.key() >= 0.0) {
+				earliestNoteStartMs = i.key();
+				i.remove();
+			} else {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+
+	currentSyllableIndex = rowStartIdx;
+	if (currentSyllableIndex == 0) {
+		firstNote = true;
+		firstNoteStartBeat = 0;
+		currentNoteStartTime = 0;
+		currentNoteStartBeat = 0;
+		currentNoteBeatLength = 0;
+		previousNoteEndBeat = 0;
+		timeLineMap.remove(-1); // delete GAP
+		ui->pushButton_UndoTap->setDisabled(true);
+	} else {
+		// Find last positive note in timeLineMap to update currentNoteStartTime and previousNoteEndBeat
+		QMap<double, QString>::const_iterator lastIt = timeLineMap.constEnd();
+		if (lastIt != timeLineMap.constBegin()) {
+			--lastIt;
+			if (lastIt.key() >= 0.0) {
+				currentNoteStartTime = lastIt.key();
+				QString lastLine = lastIt.value();
+				int colonIdx = lastLine.lastIndexOf(':');
+				if (colonIdx != -1) {
+					QStringList parts = lastLine.mid(colonIdx + 1).trimmed().split(' ', Qt::SkipEmptyParts);
+					if (parts.size() >= 2) {
+						qint32 prevStart = parts[0].toInt();
+						qint32 prevLen = parts[1].toInt();
+						previousNoteEndBeat = prevStart + prevLen;
+					}
+				}
+			} else {
+				currentNoteStartTime = 0;
+			}
+		}
+	}
+
+	updateSyllableButtons();
+	lyricsProgressBar->setValue(qMax(0, lyricsProgressBar->value() - numNotesToDelete));
+
+	if (currentSyllableIndex > 0 && lyricsSyllableList[currentSyllableIndex - 1].endsWith("\n")) {
+		addLinebreak = true;
+	} else {
+		addLinebreak = false;
+	}
+
+	updateOutputLyrics();
+
+	if (currentSyllableIndex == 0 || earliestNoteStartMs < 0.0) {
+		BASS_SetPosition(0.0);
+	} else {
+		double preRollTime = 2.0; // step 2.0 seconds before the row's first note
+		BASS_SetPosition(qMax(0.0, (earliestNoteStartMs / 1000.0) - preRollTime));
+	}
+
+	if (pauseAfterUndo && state == playing) {
+		state = QUMainWindow::paused;
+		ui->pushButton_PlayPause->setIcon(QIcon(":/player/play.png"));
+		ui->pushButton_Tap->setDisabled(true);
+		ui->pushButton_NextSyllable1->setDisabled(true);
+		ui->pushButton_NextSyllable2->setDisabled(true);
+		ui->pushButton_NextSyllable3->setDisabled(true);
+		ui->pushButton_NextSyllable4->setDisabled(true);
+		ui->pushButton_NextSyllable5->setDisabled(true);
+		BASS_Pause();
+		isFirstKeyPress = true;
+	}
+}
+
 void QUMainWindow::updateSyllableButtons() {
 	QString syllable = lyricsSyllableList[currentSyllableIndex];
 	syllable.replace("\n", "¶").replace("•", "").replace("+", "");
@@ -1845,6 +1969,26 @@ void QUMainWindow::keyPressEvent(QKeyEvent *event) {
 	           qobject_cast<QPlainTextEdit*>(fw))) {
 		QWidget::keyPressEvent(event);
 		return;
+	}
+
+	if (event->key() == Qt::Key_Z) {
+		if (event->isAutoRepeat()) {
+			event->ignore();
+			return;
+		}
+		if (event->modifiers() == Qt::NoModifier) {
+			if (state == playing || state == paused) {
+				event->ignore();
+				undoRow(false);
+				return;
+			}
+		} else if (event->modifiers() == Qt::ControlModifier) {
+			if (state == playing || state == paused) {
+				event->ignore();
+				undoRow(true);
+				return;
+			}
+		}
 	}
 
 	if (event->modifiers() & (Qt::MetaModifier | Qt::AltModifier | Qt::ControlModifier)) {
@@ -2201,7 +2345,7 @@ void QUMainWindow::on_actionHelp_triggered()
 {
 	QUMessageBox::information(0,
 							  QObject::tr("Welcome to UltraStar Creator!"),
-							  QObject::tr("This tool enables you to <b>rapidly</b> create UltraStar text files <b>from scratch</b>.<br><br>To get started, simply chose a <b>song file</b> in MP3 or OGG format, insert the <b>song lyrics</b> from a file or the clipboard and divide them into syllables with '+'.<br><br><b>Important song meta information</b> such as <b>BPM</b> and <b>GAP</b> are determined <b>automatically</b> while the <b>ID3 tag</b> is used to fill in additional song details, if available.<br><br>To <b>start tapping</b>, hit the play/pause button (Keyboard: CTRL-P). Keep the <b>tap button</b> (keyboard: space bar) pressed for as long as the current syllable is sung to tap a note. <b>Undo</b> the last tap with the undo button (Keyboard: x), <b>stop tapping</b> with the stop button (Keyboard: CTRL-S), <b>restart</b> from the beginning with the reset button (Keyboard: CTRL-R). When finished, <b>save</b> the tapped song using the save button (CTRL-S).<br><br>Having successfully tapped a song, use the UltraStar internal editor for <b>finetuning the timings</b>, setting <b>note pitches</b> and <b>golden</b> or <b>freestyle notes</b>.<br><br><b>Happy creating!</b>"),
+							  QObject::tr("This tool enables you to <b>rapidly</b> create UltraStar text files <b>from scratch</b>.<br><br>To get started, simply chose a <b>song file</b> in MP3 or OGG format, insert the <b>song lyrics</b> from a file or the clipboard and divide them into syllables with '+'.<br><br><b>Important song meta information</b> such as <b>BPM</b> and <b>GAP</b> are determined <b>automatically</b> while the <b>ID3 tag</b> is used to fill in additional song details, if available.<br><br>To <b>start tapping</b>, hit the play/pause button (Keyboard: CTRL-P). Keep the <b>tap button</b> (keyboard: space bar) pressed for as long as the current syllable is sung to tap a note. <b>Undo</b> the last tap with the undo button (Keyboard: x), <b>undo the current row</b> (Keyboard: z), <b>undo row & pause</b> (Keyboard: CTRL-Z), <b>stop tapping</b> with the stop button (Keyboard: CTRL-S), <b>restart</b> from the beginning with the reset button (Keyboard: CTRL-R). When finished, <b>save</b> the tapped song using the save button (CTRL-S).<br><br>Having successfully tapped a song, use the UltraStar internal editor for <b>finetuning the timings</b>, setting <b>note pitches</b> and <b>golden</b> or <b>freestyle notes</b>.<br><br><b>Happy creating!</b>"),
 							  BTN << ":/icons/accept.png" << QObject::tr("Okay. Let's go!"),
 							  550,
 							  0);

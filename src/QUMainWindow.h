@@ -129,6 +129,7 @@ private:
 	QString cleanLyrics(QString);
 	void splitLyricsIntoSyllables();
 	void resetTappingState();
+	void undoRow(bool pauseAfterUndo = false);
 	HSTREAM _mediaStream;
 	void BASS_Stop();
 	void BASS_Free();

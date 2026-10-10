@@ -2424,7 +2424,7 @@ Before tapping, the lyrics need to meet the following requirements:
               </size>
              </property>
              <property name="shortcut">
-              <string>R</string>
+              <string>Ctrl+R</string>
              </property>
              <property name="autoRaise">
               <bool>true</bool>
