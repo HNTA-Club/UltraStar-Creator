@@ -114,12 +114,8 @@ jobs:
           if-no-files-found: error
 
   build_mac:
-    name: Build for MacOS (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-latest, macos-15-intel]
-      fail-fast: false
+    name: Build for MacOS
+    runs-on: macos-latest
     steps:
       - name: Get Number of CPU Cores
         id: cpu-cores
@@ -324,7 +320,7 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-x86-UltraStar-Creator-portable/*, MAC-ARM-UltraStar-Creator-portable/*, MAC-x86-UltraStar-Creator-image/*, MAC-ARM-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
+          artifacts: "LINUX-UltraStar-Creator-appimage/*, MAC-*-UltraStar-Creator-portable/*, MAC-*-UltraStar-Creator-image/*, WIN64-UltraStar-Creator-installer/*, WIN64-UltraStar-Creator-portable.zip"
           draft: true
           generateReleaseNotes: true
           artifactErrorsFailBuild: true
