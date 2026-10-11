@@ -201,6 +201,70 @@ void QUMainWindow::initWindow() {
 	ui->horizontalSlider_PlaybackSpeed->setFocusPolicy(Qt::NoFocus);
 	ui->horizontalSlider_MP3->setFocusPolicy(Qt::NoFocus);
 
+	currentQueueIndex = 0;
+
+	menu_TapRoleFilter = new QMenu(this);
+
+	actionTapP1 = new QAction(tr("Singer 1 (P1)"), this);
+	actionTapP1->setCheckable(true);
+	actionTapP1->setChecked(true);
+
+	actionTapP2 = new QAction(tr("Singer 2 (P2)"), this);
+	actionTapP2->setCheckable(true);
+	actionTapP2->setChecked(true);
+
+	actionTapBoth = new QAction(tr("Both"), this);
+	actionTapBoth->setCheckable(true);
+	actionTapBoth->setChecked(true);
+
+	menu_TapRoleFilter->addAction(actionTapP1);
+	menu_TapRoleFilter->addAction(actionTapP2);
+	menu_TapRoleFilter->addAction(actionTapBoth);
+	menu_TapRoleFilter->addSeparator();
+
+	connect(actionTapP1, &QAction::triggered, this, &QUMainWindow::onTapFilterChanged);
+	connect(actionTapP2, &QAction::triggered, this, &QUMainWindow::onTapFilterChanged);
+	connect(actionTapBoth, &QAction::triggered, this, &QUMainWindow::onTapFilterChanged);
+
+	auto setFilter = [this](bool p1, bool p2, bool both) {
+		const QSignalBlocker b1(actionTapP1), b2(actionTapP2), bb(actionTapBoth);
+		actionTapP1->setChecked(p1);
+		actionTapP2->setChecked(p2);
+		actionTapBoth->setChecked(both);
+		onTapFilterChanged();
+	};
+
+	actionSelectAll = menu_TapRoleFilter->addAction(tr("All Singers"), [=]() { setFilter(true, true, true); });
+	actionSelectP1AndBoth = menu_TapRoleFilter->addAction(tr("Singer 1 + Both"), [=]() { setFilter(true, false, true); });
+	actionSelectP2AndBoth = menu_TapRoleFilter->addAction(tr("Singer 2 + Both"), [=]() { setFilter(false, true, true); });
+	actionSelectP1Only = menu_TapRoleFilter->addAction(tr("Singer 1 only"), [=]() { setFilter(true, false, false); });
+	actionSelectP2Only = menu_TapRoleFilter->addAction(tr("Singer 2 only"), [=]() { setFilter(false, true, false); });
+	actionSelectBothOnly = menu_TapRoleFilter->addAction(tr("Both only"), [=]() { setFilter(false, false, true); });
+
+	ui->toolButton_TapRoleFilter->setMenu(menu_TapRoleFilter);
+	ui->toolButton_TapRoleFilter->setPopupMode(QToolButton::InstantPopup);
+
+	ui->plainTextEdit_InputLyrics->installEventFilter(this);
+	if (ui->plainTextEdit_InputLyrics->viewport()) {
+		ui->plainTextEdit_InputLyrics->viewport()->installEventFilter(this);
+	}
+
+	ui->pushButton_RoleP1->setFocusPolicy(Qt::NoFocus);
+	ui->pushButton_RoleP2->setFocusPolicy(Qt::NoFocus);
+	ui->pushButton_RoleBoth->setFocusPolicy(Qt::NoFocus);
+
+	ui->pushButton_RoleP1->setAutoDefault(true);
+	ui->pushButton_RoleP2->setAutoDefault(true);
+	ui->pushButton_RoleBoth->setAutoDefault(true);
+
+	ui->pushButton_RoleP1->installEventFilter(this);
+	ui->pushButton_RoleP2->installEventFilter(this);
+	ui->pushButton_RoleBoth->installEventFilter(this);
+
+	isDuetSong = false;
+	duetHighlighter = new QUDuetHighlighter(ui->plainTextEdit_InputLyrics->document());
+	updateDuetWidgetsVisibility();
+
 	/*
 	resize(1000, 500);
 
@@ -419,6 +483,8 @@ void QUMainWindow::initStatusBar() {
 
 bool QUMainWindow::on_pushButton_SaveToFile_clicked()
 {
+	updateOutputLyrics();
+
 	QString suggestedFileName = QString("%1 - %2.txt").arg(ui->lineEdit_Artist->text(), ui->lineEdit_Title->text());
 	for (auto repl : FILENAME_REPLACEMENTS)
 		for (auto in_char : repl.first)
@@ -449,7 +515,7 @@ bool QUMainWindow::on_pushButton_SaveToFile_clicked()
 
 void QUMainWindow::on_pushButton_PlayPause_clicked()
 {
-	if (state == initialized) {
+	if (state == initialized || state == stopped) {
 		setCursor(Qt::WaitCursor);
 		state = QUMainWindow::playing;
 		currentSyllableIndex = 0;
@@ -519,6 +585,17 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 		if (!ui->comboBox_Video->currentText().isEmpty() && ui->comboBox_Video->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-4, QString("#VIDEO:%1").arg(ui->comboBox_Video->currentText()));
 		}
+		if (isDuetSong) {
+			QString singer1 = ui->lineEdit_SingerP1->text().trimmed();
+			if (singer1.isEmpty()) singer1 = tr("Singer 1");
+			QString singer2 = ui->lineEdit_SingerP2->text().trimmed();
+			if (singer2.isEmpty()) singer2 = tr("Singer 2");
+
+			timeLineMap.insert(-3.5, QString("#DUETSINGERP1:%1").arg(singer1));
+			timeLineMap.insert(-3.4, QString("#P1:%1").arg(singer1));
+			timeLineMap.insert(-3.3, QString("#DUETSINGERP2:%1").arg(singer2));
+			timeLineMap.insert(-3.2, QString("#P2:%1").arg(singer2));
+		}
 		timeLineMap.insert(-2, QString("#BPM:%1").arg(ui->doubleSpinBox_BPM->text()));
 		// BPM might have been changed manually
 		BPM = ui->doubleSpinBox_BPM->value();
@@ -530,24 +607,28 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 		lyricsString = cleanLyrics(rawLyricsString);
 
 		splitLyricsIntoSyllables();
-		numSyllables = lyricsSyllableList.length();
-		lyricsProgressBar->setRange(0,numSyllables);
+		buildActiveSyllableQueue();
+		currentQueueIndex = 0;
+		numSyllables = activeSyllableIndices.size();
+		lyricsProgressBar->setRange(0, numSyllables);
 		lyricsProgressBar->setValue(0);
 		lyricsProgressBar->show();
+		ui->toolButton_TapRoleFilter->setDisabled(true);
 
 		updateSyllableButtons();
 
 		// reset from preview play
 		BASS_StopAndFree();
-		_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data() , 0, 0, BASS_STREAM_DECODE);
+		if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
+			_mediaStream = BASS_FX_TempoCreate(_mediaStream, BASS_FX_FREESOURCE);
 
-		_mediaStream = BASS_FX_TempoCreate(_mediaStream, BASS_FX_FREESOURCE);
-
-		BASS_ChannelGetAttribute(_mediaStream, BASS_ATTRIB_FREQ, &sampleRate);
-		float tempo = static_cast<float>(ui->horizontalSlider_PlaybackSpeed->value() - 100);
-		if (BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, tempo)) {
-			BASS_Play();
-			updateTime();
+			BASS_ChannelGetAttribute(_mediaStream, BASS_ATTRIB_FREQ, &sampleRate);
+			float tempo = static_cast<float>(ui->horizontalSlider_PlaybackSpeed->value() - 100);
+			if (BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, tempo)) {
+				BASS_Play();
+				updateTime();
+			}
 		}
 
 		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
@@ -568,7 +649,9 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 		ui->pushButton_NextSyllable3->setDisabled(true);
 		ui->pushButton_NextSyllable4->setDisabled(true);
 		ui->pushButton_NextSyllable5->setDisabled(true);
+		ui->toolButton_TapRoleFilter->setDisabled(true);
 		BASS_Pause();
+		updateOutputLyrics();
 	}
 	else if (state == paused) {
 		state = QUMainWindow::playing;
@@ -579,6 +662,7 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 		ui->pushButton_NextSyllable3->setEnabled(true);
 		ui->pushButton_NextSyllable4->setEnabled(true);
 		ui->pushButton_NextSyllable5->setEnabled(true);
+		ui->toolButton_TapRoleFilter->setDisabled(true);
 		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
 		BASS_Resume();
 	}
@@ -599,10 +683,12 @@ QString QUMainWindow::cleanLyrics(QString rawLyricsString) {
 	rawLyricsString.replace("\r\n", "\n").replace("\r", "\n");
 
 	// delete surplus space characters
-	rawLyricsString = rawLyricsString.replace(QRegularExpression(" {2,}"), " ");
+	static const QRegularExpression reMultiSpace(" {2,}");
+	rawLyricsString = rawLyricsString.replace(reMultiSpace, " ");
 
 	// delete surplus blank lines...
-	rawLyricsString = rawLyricsString.replace(QRegularExpression("\\n{2,}"), "\n");
+	static const QRegularExpression reMultiNewline("\\n{2,}");
+	rawLyricsString = rawLyricsString.replace(reMultiNewline, "\n");
 
 	// replace misused accents (´,`) by the correct apostrophe (')
 	rawLyricsString = rawLyricsString.replace("´", "'");
@@ -610,7 +696,7 @@ QString QUMainWindow::cleanLyrics(QString rawLyricsString) {
 	rawLyricsString = rawLyricsString.replace("'", "’");
 
 	// delete leading and trailing whitespace from each line, omitting empty lines
-	QStringList rawLyricsStringList = rawLyricsString.split(QRegularExpression("\\n"));
+	QStringList rawLyricsStringList = rawLyricsString.split('\n');
 	QStringList lyricsStringList;
 	for (const QString &rawLine : rawLyricsStringList) {
 		QString currentLine = rawLine.trimmed();
@@ -633,7 +719,6 @@ void QUMainWindow::on_pushButton_Tap_pressed()
 	currentNoteStartTime = BASS_Position()*1000; // milliseconds
 
 	// conversion from milliseconds [ms] to quarter beats [qb]: time [ms] * BPM [qb/min] * 1/60 [min/s] * 1/1000 [s/ms]
-	previousNoteEndBeat = currentNoteStartBeat + currentNoteBeatLength - firstNoteStartBeat;
 	currentNoteStartBeat = currentNoteStartTime * (BPM / 15000);
 	
 	ui->pushButton_Tap->setCursor(Qt::ClosedHandCursor);
@@ -657,22 +742,37 @@ void QUMainWindow::on_pushButton_Tap_released()
 	currentNoteBeatLength = qMax(1.0, currentNoteTimeLength * (BPM / 15000));
 	if (firstNote){
 		firstNoteStartBeat = currentNoteStartBeat;
-		timeLineMap.insert(-1, QString("#GAP:%1").arg(QString::number(round(currentNoteStartTime/10)*10, 'f', 0)));
+		QString gapLine = QString("#GAP:%1").arg(QString::number(round(currentNoteStartTime/10)*10, 'f', 0));
+		timeLineMap.insert(-1, gapLine);
 		firstNote = false;
+		ui->textEdit_OutputLyrics->append(gapLine);
 	}
 	
-	QString linebreakString = "";
+	if (currentQueueIndex >= activeSyllableIndices.size()) {
+		return;
+	}
 
-	QString currentSyllable = lyricsSyllableList[currentSyllableIndex];
-	
+	int globalIdx = activeSyllableIndices[currentQueueIndex];
+	QString currentSyllable = (globalIdx < lyricsSyllableList.size()) ? lyricsSyllableList[globalIdx] : "";
+	currentSyllableIndex = globalIdx;
+
+	qint32 currentStartRel = currentNoteStartBeat - firstNoteStartBeat;
+	QString linebreakString = "";
 	if (addLinebreak)
 	{
-		qint32 linebreakBeat = previousNoteEndBeat + (currentNoteStartBeat - firstNoteStartBeat - previousNoteEndBeat)/2;
+		if (previousNoteEndBeat > currentStartRel) {
+			previousNoteEndBeat = qMax(0, currentStartRel - 1);
+		}
+		qint32 linebreakBeat = previousNoteEndBeat + (currentStartRel - previousNoteEndBeat) / 2;
+		if (linebreakBeat > currentStartRel) {
+			linebreakBeat = currentStartRel;
+		}
 		linebreakString = QString("- %1\n").arg(QString::number(linebreakBeat));
 		addLinebreak = false;
 	}
 	
-	if (currentSyllable.endsWith("\n")) {
+	bool syllableHadNewline = currentSyllable.endsWith("\n");
+	if (syllableHadNewline) {
 		addLinebreak = true;
 		currentSyllable.chop(1);
 	}
@@ -680,14 +780,25 @@ void QUMainWindow::on_pushButton_Tap_released()
 		currentSyllable.chop(1);
 	}
 
-	currentOutputTextLine = QString("%1: %2 %3 %4 %5").arg(linebreakString, QString::number(currentNoteStartBeat - firstNoteStartBeat), QString::number(currentNoteBeatLength), "0", currentSyllable);
+	currentOutputTextLine = QString("%1: %2 %3 %4 %5").arg(linebreakString, QString::number(currentStartRel), QString::number(currentNoteBeatLength), "0", currentSyllable);
+	previousNoteEndBeat = currentStartRel + currentNoteBeatLength;
 
 	timeLineMap.insert(currentNoteStartTime, currentOutputTextLine);
 
-	updateOutputLyrics();
+	TappedNote tappedNote;
+	tappedNote.startTimeMs = currentNoteStartTime;
+	tappedNote.durationMs = currentNoteTimeLength;
+	tappedNote.pitch = 0;
+	tappedNote.syllable = currentSyllable;
+	tappedNote.role = (isDuetSong && globalIdx < lyricsSyllableRoles.size()) ? lyricsSyllableRoles[globalIdx] : SingerRole::Solo;
+	tappedNote.hasLinebreakAfter = syllableHadNewline;
+	syllableNotesMap.insert(globalIdx, tappedNote);
 
-	if ((currentSyllableIndex+1) < numSyllables) {
-		currentSyllableIndex++;
+	ui->textEdit_OutputLyrics->append(currentOutputTextLine);
+
+	currentQueueIndex++;
+	if (currentQueueIndex < activeSyllableIndices.size()) {
+		currentSyllableIndex = activeSyllableIndices[currentQueueIndex];
 		updateSyllableButtons();
 	}
 	else {
@@ -698,6 +809,31 @@ void QUMainWindow::on_pushButton_Tap_released()
 		ui->pushButton_NextSyllable4->setText("");
 		ui->pushButton_NextSyllable5->setText("");
 		on_pushButton_Stop_clicked();
+
+		if (isDuetSong) {
+			int totalTapped = syllableNotesMap.size();
+			int totalSyllables = lyricsSyllableList.size();
+			if (totalTapped < totalSyllables) {
+				int res = QUMessageBox::information(this,
+					tr("Pass Finished"),
+					tr("You finished tapping this pass (%1/%2 syllables tapped overall).\n\nSwitch singer filter in Step 6 to continue tapping other singers, or save your progress.")
+						.arg(totalTapped).arg(totalSyllables),
+					BTN << ":/player/prev.png" << tr("Continue With Another Singer")
+						<< ":/icons/accept.png" << tr("Save UltraStar File"),
+					380);
+				if (res == 1) {
+					on_pushButton_SaveToFile_clicked();
+				} else {
+					state = QUMainWindow::initialized;
+					previewState = QUMainWindow::initialized;
+					ui->pushButton_PlayPause->setEnabled(true);
+					if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+						_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
+					}
+				}
+				return;
+			}
+		}
 
 		int result = QUMessageBox::information(this,
 							tr("Tapping finished"),
@@ -718,15 +854,30 @@ void QUMainWindow::on_pushButton_Tap_released()
 void QUMainWindow::updateOutputLyrics()
 {
 	ui->textEdit_OutputLyrics->clear();
-	// insert header
-	QMapIterator<double, QString> i(timeLineMap);
+	if (isDuetSong) {
+		QString p1 = ui->lineEdit_SingerP1->text().trimmed();
+		if (p1.isEmpty()) p1 = tr("Singer 1");
+		QString p2 = ui->lineEdit_SingerP2->text().trimmed();
+		if (p2.isEmpty()) p2 = tr("Singer 2");
+
+		QList<TappedNote> notes = syllableNotesMap.values();
+		std::sort(notes.begin(), notes.end(), [](const TappedNote &a, const TappedNote &b) {
+			return a.startTimeMs < b.startTimeMs;
+		});
+
+		QString duetText = QUDuetSupport::buildDuetSongText(timeLineMap, notes, BPM, p1, p2);
+		ui->textEdit_OutputLyrics->setPlainText(duetText);
+	} else {
+		// insert header
+		QMapIterator<double, QString> i(timeLineMap);
 		while (i.hasNext()) {
 			i.next();
-			 if (i.key() <= currentNoteStartTime)
-			 {
-				 ui->textEdit_OutputLyrics->append(i.value());
-			 }
-		 }
+			if (i.key() <= currentNoteStartTime)
+			{
+				ui->textEdit_OutputLyrics->append(i.value());
+			}
+		}
+	}
 }
 
 void QUMainWindow::on_pushButton_PasteFromClipboard_clicked()
@@ -750,8 +901,19 @@ void QUMainWindow::on_pushButton_Stop_clicked()
 		ui->label_TimeElapsed->setText("0:00");
 		ui->label_TimeToRun->setText("0:00");
 
-		ui->textEdit_OutputLyrics->append("E");
-		ui->textEdit_OutputLyrics->append("");
+		if (isDuetSong) {
+			updateOutputLyrics();
+		} else {
+			ui->textEdit_OutputLyrics->append("E");
+			ui->textEdit_OutputLyrics->append("");
+		}
+
+		for (QPushButton *btn : {ui->pushButton_Tap, ui->pushButton_NextSyllable1, ui->pushButton_NextSyllable2,
+		                         ui->pushButton_NextSyllable3, ui->pushButton_NextSyllable4, ui->pushButton_NextSyllable5}) {
+			btn->setStyleSheet("");
+			btn->setProperty("_appliedRole", -1);
+			btn->setProperty("_appliedDark", -1);
+		}
 
 		QMainWindow::statusBar()->showMessage(tr("USC ready."));
 
@@ -761,6 +923,7 @@ void QUMainWindow::on_pushButton_Stop_clicked()
 		ui->pushButton_Reset->setEnabled(true);
 		ui->groupBox_TapArea->setDisabled(true);
 		ui->pushButton_SaveToFile->setEnabled(true);
+		ui->toolButton_TapRoleFilter->setEnabled(true);
 		QWidget::setAcceptDrops(true);
 	}
 	else {
@@ -892,6 +1055,268 @@ void QUMainWindow::on_lineEdit_Artist_textChanged(QString artist)
 	}
 	else {
 		ui->label_ArtistSet->setPixmap(QPixmap(":/icons/path_error.png"));
+	}
+}
+
+void QUMainWindow::on_checkBox_DuetSong_toggled(bool checked)
+{
+	isDuetSong = checked;
+	if (checked) {
+		const QSignalBlocker b1(ui->lineEdit_SingerP1), b2(ui->lineEdit_SingerP2);
+		if (ui->lineEdit_SingerP1->text().trimmed().isEmpty()) {
+			QString artist = ui->lineEdit_Artist->text().trimmed();
+			ui->lineEdit_SingerP1->setText(!artist.isEmpty() ? artist : tr("Singer 1"));
+			ui->label_SingerP1Set->setPixmap(QPixmap(":/icons/path_ok.png"));
+		}
+		if (ui->lineEdit_SingerP2->text().trimmed().isEmpty()) {
+			ui->lineEdit_SingerP2->setText(tr("Singer 2"));
+			ui->label_SingerP2Set->setPixmap(QPixmap(":/icons/path_ok.png"));
+		}
+	}
+	updateDuetWidgetsVisibility();
+}
+
+void QUMainWindow::on_lineEdit_SingerP1_textChanged(const QString &text)
+{
+	if (!text.trimmed().isEmpty()) {
+		ui->label_SingerP1Set->setPixmap(QPixmap(":/icons/path_ok.png"));
+	} else {
+		ui->label_SingerP1Set->setPixmap(QPixmap(":/icons/path_error.png"));
+	}
+	updateTapFilterSummary();
+}
+
+void QUMainWindow::on_lineEdit_SingerP2_textChanged(const QString &text)
+{
+	if (!text.trimmed().isEmpty()) {
+		ui->label_SingerP2Set->setPixmap(QPixmap(":/icons/path_ok.png"));
+	} else {
+		ui->label_SingerP2Set->setPixmap(QPixmap(":/icons/path_error.png"));
+	}
+	updateTapFilterSummary();
+}
+
+void QUMainWindow::updateDuetWidgetsVisibility()
+{
+	bool showDuet = ui->checkBox_DuetSong->isChecked();
+	ui->label_SingerP1Icon->setVisible(showDuet);
+	ui->label_SingerP1->setVisible(showDuet);
+	ui->lineEdit_SingerP1->setVisible(showDuet);
+	ui->label_SingerP1Set->setVisible(showDuet);
+	ui->label_SingerP2Icon->setVisible(showDuet);
+	ui->label_SingerP2->setVisible(showDuet);
+	ui->lineEdit_SingerP2->setVisible(showDuet);
+	ui->label_SingerP2Set->setVisible(showDuet);
+	ui->widget_DuetRoleToolbar->setVisible(showDuet);
+	ui->widget_TapRoleFilter->setVisible(showDuet);
+
+	if (duetHighlighter) {
+		duetHighlighter->setDuetEnabled(showDuet);
+	}
+	if (showDuet) {
+		updateTapFilterSummary();
+	}
+}
+
+void QUMainWindow::assignRoleToSelectedLines(SingerRole role)
+{
+	if (!isDuetSong) {
+		return;
+	}
+
+	QTextCursor cursor = ui->plainTextEdit_InputLyrics->textCursor();
+	bool hasSelection = cursor.hasSelection();
+	int start = cursor.selectionStart();
+	int end = cursor.selectionEnd();
+
+	QTextBlock startBlock = ui->plainTextEdit_InputLyrics->document()->findBlock(start);
+	QTextBlock endBlock = ui->plainTextEdit_InputLyrics->document()->findBlock(qMax(start, end > start ? end - 1 : end));
+
+	if (!startBlock.isValid() || !endBlock.isValid()) {
+		return;
+	}
+
+	int startBlockNum = startBlock.blockNumber();
+	int endBlockNum = endBlock.blockNumber();
+	if (startBlockNum > endBlockNum) {
+		std::swap(startBlockNum, endBlockNum);
+		std::swap(startBlock, endBlock);
+	}
+
+	cursor.beginEditBlock();
+
+	QString tag = QUDuetSupport::roleTag(role);
+	QTextBlock block = startBlock;
+
+	for (int b = startBlockNum; b <= endBlockNum && block.isValid(); ++b, block = block.next()) {
+		QString line = block.text();
+		SingerRole existingRole = SingerRole::Solo;
+		QString stripped = QUDuetSupport::stripRoleTag(line, &existingRole);
+
+		QString newLine;
+		if (existingRole == role) {
+			// Toggle off if already assigned to this role
+			newLine = stripped;
+		} else {
+			newLine = tag + " " + stripped;
+		}
+
+		QTextCursor blockCursor(block);
+		blockCursor.movePosition(QTextCursor::StartOfBlock);
+		blockCursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+		blockCursor.insertText(newLine);
+	}
+
+	cursor.endEditBlock();
+
+	// Restore selection or cursor position cleanly covering the modified blocks
+	QTextBlock firstBlock = ui->plainTextEdit_InputLyrics->document()->findBlockByNumber(startBlockNum);
+	QTextBlock lastBlock = ui->plainTextEdit_InputLyrics->document()->findBlockByNumber(endBlockNum);
+	if (firstBlock.isValid() && lastBlock.isValid()) {
+		QTextCursor newCursor(firstBlock);
+		newCursor.movePosition(QTextCursor::StartOfBlock);
+		if (hasSelection) {
+			newCursor.setPosition(lastBlock.position() + lastBlock.text().length(), QTextCursor::KeepAnchor);
+		} else {
+			newCursor.setPosition(lastBlock.position() + lastBlock.text().length());
+		}
+		ui->plainTextEdit_InputLyrics->setTextCursor(newCursor);
+	}
+
+	ui->plainTextEdit_InputLyrics->setFocus();
+
+	if (state != playing && !lyricsSyllableList.isEmpty()) {
+		lyricsString = ui->plainTextEdit_InputLyrics->toPlainText();
+		splitLyricsIntoSyllables();
+		buildActiveSyllableQueue();
+		currentQueueIndex = qBound(0, currentQueueIndex, qMax(0, activeSyllableIndices.size() - 1));
+		updateSyllableButtons();
+	}
+}
+
+void QUMainWindow::on_pushButton_RoleP1_clicked()
+{
+	assignRoleToSelectedLines(SingerRole::P1);
+}
+
+void QUMainWindow::on_pushButton_RoleP2_clicked()
+{
+	assignRoleToSelectedLines(SingerRole::P2);
+}
+
+void QUMainWindow::on_pushButton_RoleBoth_clicked()
+{
+	assignRoleToSelectedLines(SingerRole::Both);
+}
+
+void QUMainWindow::updateTapFilterSummary()
+{
+	if (!actionTapP1 || !actionTapP2 || !actionTapBoth || !ui->toolButton_TapRoleFilter) {
+		return;
+	}
+
+	QString p1Name = ui->lineEdit_SingerP1->text().trimmed();
+	if (p1Name.isEmpty()) p1Name = tr("Singer 1");
+	QString p2Name = ui->lineEdit_SingerP2->text().trimmed();
+	if (p2Name.isEmpty()) p2Name = tr("Singer 2");
+
+	actionTapP1->setText(QString("%1 (P1)").arg(p1Name));
+	actionTapP2->setText(QString("%1 (P2)").arg(p2Name));
+	actionTapBoth->setText(tr("Both"));
+
+	actionSelectAll->setText(tr("All Singers"));
+	actionSelectP1AndBoth->setText(QString(tr("%1 + Both")).arg(p1Name));
+	actionSelectP2AndBoth->setText(QString(tr("%1 + Both")).arg(p2Name));
+	actionSelectP1Only->setText(QString(tr("%1 only")).arg(p1Name));
+	actionSelectP2Only->setText(QString(tr("%1 only")).arg(p2Name));
+	actionSelectBothOnly->setText(tr("Both only"));
+
+	bool p1 = actionTapP1->isChecked();
+	bool p2 = actionTapP2->isChecked();
+	bool both = actionTapBoth->isChecked();
+
+	// Prevent having none checked - at least one singer must be active
+	if (!p1 && !p2 && !both) {
+		actionTapP1->setChecked(true);
+		p1 = true;
+	}
+
+	QString summary;
+	if (p1 && p2 && both) {
+		summary = tr("All Singers");
+	} else if (p1 && both && !p2) {
+		summary = QString("%1 + Both").arg(p1Name);
+	} else if (p2 && both && !p1) {
+		summary = QString("%1 + Both").arg(p2Name);
+	} else if (p1 && !p2 && !both) {
+		summary = p1Name;
+	} else if (p2 && !p1 && !both) {
+		summary = p2Name;
+	} else if (both && !p1 && !p2) {
+		summary = tr("Both only");
+	} else if (p1 && p2 && !both) {
+		summary = QString("%1 + %2").arg(p1Name, p2Name);
+	} else {
+		summary = tr("Filtered");
+	}
+
+	ui->toolButton_TapRoleFilter->setText(summary + " \u25BE");
+}
+
+void QUMainWindow::buildActiveSyllableQueue()
+{
+	activeSyllableIndices.clear();
+	activeSyllableIndices.reserve(lyricsSyllableList.size());
+
+	bool incP1 = actionTapP1 && actionTapP1->isChecked();
+	bool incP2 = actionTapP2 && actionTapP2->isChecked();
+	bool incBoth = actionTapBoth && actionTapBoth->isChecked();
+
+	for (int i = 0; i < lyricsSyllableList.size(); ++i) {
+		if (!isDuetSong) {
+			activeSyllableIndices.append(i);
+			continue;
+		}
+
+		SingerRole role = (i < lyricsSyllableRoles.size()) ? lyricsSyllableRoles[i] : SingerRole::Solo;
+		bool include = false;
+		if (role == SingerRole::P1) {
+			include = incP1;
+		} else if (role == SingerRole::P2) {
+			include = incP2;
+		} else if (role == SingerRole::Both) {
+			include = incBoth;
+		} else if (role == SingerRole::Solo) {
+			include = true;
+		}
+
+		if (include) {
+			activeSyllableIndices.append(i);
+		}
+	}
+
+	numSyllables = activeSyllableIndices.size();
+	lyricsProgressBar->setRange(0, numSyllables);
+	lyricsProgressBar->setValue(qMin(currentQueueIndex, numSyllables));
+}
+
+void QUMainWindow::onTapFilterChanged()
+{
+	updateTapFilterSummary();
+	if (state == stopped) {
+		state = QUMainWindow::initialized;
+		previewState = QUMainWindow::initialized;
+		ui->pushButton_PlayPause->setEnabled(true);
+		if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
+		}
+	}
+	if (state != playing) {
+		lyricsString = ui->plainTextEdit_InputLyrics->toPlainText();
+		splitLyricsIntoSyllables();
+		buildActiveSyllableQueue();
+		currentQueueIndex = 0;
+		updateSyllableButtons();
 	}
 }
 
@@ -1047,7 +1472,6 @@ void QUMainWindow::on_pushButton_BrowseSubtitles_clicked()
 		
 		float GAP = 0;
 		bool GAPset = false;
-		int prevendbeat = 0;
 		
 		for(const auto& substring: sub) {
 			QString line = QString::fromStdString(substring->getText()).remove("♪").trimmed();
@@ -1333,7 +1757,7 @@ void QUMainWindow::handleMP3() {
 
 	ui->lineEdit_MP3->setText(fileInfo_MP3->fileName());
 
-	_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data() , 0, 0, BASS_STREAM_DECODE);
+	_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data() , 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
 	QWORD MP3LengthBytes = BASS_ChannelGetLength(_mediaStream, BASS_POS_BYTE); // the length in bytes
 	MP3LengthTime = BASS_ChannelBytes2Seconds(_mediaStream, MP3LengthBytes); // the length in seconds
 	ui->horizontalSlider_MP3->setRange(0, (int)MP3LengthTime);
@@ -1417,6 +1841,15 @@ void QUMainWindow::handleMP3() {
 	ui->label_Artist->setEnabled(enabled);
 	ui->lineEdit_Artist->setEnabled(enabled);
 	ui->label_ArtistSet->setEnabled(enabled);
+	ui->checkBox_DuetSong->setEnabled(enabled);
+	ui->label_SingerP1Icon->setEnabled(enabled);
+	ui->label_SingerP1->setEnabled(enabled);
+	ui->lineEdit_SingerP1->setEnabled(enabled);
+	ui->label_SingerP1Set->setEnabled(enabled);
+	ui->label_SingerP2Icon->setEnabled(enabled);
+	ui->label_SingerP2->setEnabled(enabled);
+	ui->lineEdit_SingerP2->setEnabled(enabled);
+	ui->label_SingerP2Set->setEnabled(enabled);
 	ui->label_LanguageIcon->setEnabled(enabled);
 	ui->label_Language->setEnabled(enabled);
 	ui->comboBox_Language->setEnabled(enabled);
@@ -1669,6 +2102,10 @@ void QUMainWindow::updatePreviewTime() {
 
 void QUMainWindow::resetTappingState() {
 	timeLineMap.clear();
+	syllableNotesMap.clear();
+	activeSyllableIndices.clear();
+	currentQueueIndex = 0;
+	lyricsSyllableRoles.clear();
 	lyricsSyllableList.clear();
 	lyricsString.clear();
 	lyricsStringList.clear();
@@ -1686,12 +2123,13 @@ void QUMainWindow::resetTappingState() {
 	addLinebreak = false;
 	currentOutputTextLine.clear();
 
-	ui->pushButton_Tap->setText("");
-	ui->pushButton_NextSyllable1->setText("");
-	ui->pushButton_NextSyllable2->setText("");
-	ui->pushButton_NextSyllable3->setText("");
-	ui->pushButton_NextSyllable4->setText("");
-	ui->pushButton_NextSyllable5->setText("");
+	for (QPushButton *btn : {ui->pushButton_Tap, ui->pushButton_NextSyllable1, ui->pushButton_NextSyllable2,
+	                         ui->pushButton_NextSyllable3, ui->pushButton_NextSyllable4, ui->pushButton_NextSyllable5}) {
+		btn->setText("");
+		btn->setStyleSheet("");
+		btn->setProperty("_appliedRole", -1);
+		btn->setProperty("_appliedDark", -1);
+	}
 
 	lyricsProgressBar->setValue(0);
 	lyricsProgressBar->hide();
@@ -1716,12 +2154,45 @@ void QUMainWindow::resetTappingState() {
 void QUMainWindow::on_pushButton_Reset_clicked()
 {
 	if (state == stopped) {
+		if (isDuetSong && !syllableNotesMap.isEmpty()) {
+			int choice = QUMessageBox::question(this,
+				tr("Reset Tapped Notes"),
+				tr("Do you want to reset all tapped notes, or only the notes for the currently selected singer(s)?"),
+				BTN << ":/icons/cancel.png" << tr("Cancel")
+					<< ":/player/prev.png" << tr("Reset Current Pass")
+					<< ":/icons/delete.png" << tr("Reset All Notes"),
+				380);
+			if (choice == 0) {
+				return;
+			} else if (choice == 1) {
+				for (int gIdx : activeSyllableIndices) {
+					if (syllableNotesMap.contains(gIdx)) {
+						double t = syllableNotesMap[gIdx].startTimeMs;
+						timeLineMap.remove(t);
+						syllableNotesMap.remove(gIdx);
+					}
+				}
+				currentQueueIndex = 0;
+				currentSyllableIndex = (currentQueueIndex < activeSyllableIndices.size()) ? activeSyllableIndices[currentQueueIndex] : 0;
+				state = QUMainWindow::initialized;
+				previewState = QUMainWindow::initialized;
+				ui->pushButton_PlayPause->setEnabled(true);
+				if (fileInfo_MP3 && fileInfo_MP3->exists()) {
+					_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
+				}
+				buildActiveSyllableQueue();
+				updateSyllableButtons();
+				updateOutputLyrics();
+				montyTalk();
+				return;
+			}
+		}
 		resetTappingState();
 		state = QUMainWindow::initialized;
 		previewState = QUMainWindow::initialized;
 		ui->pushButton_PlayPause->setEnabled(true);
 		if (fileInfo_MP3 && fileInfo_MP3->exists()) {
-			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE);
+			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
 		}
 	}
 	else {
@@ -1742,31 +2213,69 @@ void QUMainWindow::on_pushButton_UndoTap_clicked()
 		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
 	}
 
-	QMutableMapIterator<double, QString> i(timeLineMap);
+	if (currentQueueIndex > 0) {
+		currentQueueIndex--;
+		int globalIdx = (currentQueueIndex < activeSyllableIndices.size()) ? activeSyllableIndices[currentQueueIndex] : 0;
+		currentSyllableIndex = globalIdx;
 
-	if (currentSyllableIndex > 0) {
-		currentSyllableIndex = currentSyllableIndex-1;
-		if (currentSyllableIndex == 0) {
+		double erasedNoteStartMs = -1.0;
+		if (syllableNotesMap.contains(globalIdx)) {
+			erasedNoteStartMs = syllableNotesMap[globalIdx].startTimeMs;
+			syllableNotesMap.remove(globalIdx);
+		}
+		if (erasedNoteStartMs >= 0.0) {
+			timeLineMap.remove(erasedNoteStartMs);
+		}
+		if (currentQueueIndex == 0) {
 			firstNote = true;
+			firstNoteStartBeat = 0;
+			currentNoteStartTime = 0;
+			currentNoteStartBeat = 0;
+			currentNoteBeatLength = 0;
+			previousNoteEndBeat = 0;
 			timeLineMap.remove(-1); // delete GAP
 			ui->pushButton_UndoTap->setDisabled(true);
+		} else {
+			// Find last positive note in timeLineMap to update currentNoteStartTime and previousNoteEndBeat
+			QMap<double, QString>::const_iterator lastIt = timeLineMap.constEnd();
+			if (lastIt != timeLineMap.constBegin()) {
+				--lastIt;
+				if (lastIt.key() >= 0.0) {
+					currentNoteStartTime = lastIt.key();
+					QString lastLine = lastIt.value();
+					int colonIdx = lastLine.lastIndexOf(':');
+					if (colonIdx != -1) {
+						QStringList parts = lastLine.mid(colonIdx + 1).trimmed().split(' ', Qt::SkipEmptyParts);
+						if (parts.size() >= 2) {
+							qint32 prevStart = parts[0].toInt();
+							qint32 prevLen = parts[1].toInt();
+							previousNoteEndBeat = prevStart + prevLen;
+							currentNoteStartBeat = prevStart + firstNoteStartBeat;
+							currentNoteBeatLength = prevLen;
+						}
+					}
+				} else {
+					currentNoteStartTime = 0;
+				}
+			}
 		}
 		updateSyllableButtons();
-		lyricsProgressBar->setValue(lyricsProgressBar->value()-1);
-		i.toBack();
-		i.previous();
-		double erasedNoteStartMs = i.key();
-		timeLineMap.remove(erasedNoteStartMs);
+		lyricsProgressBar->setValue(qMax(0, lyricsProgressBar->value() - 1));
 
-		if (currentSyllableIndex > 0 && lyricsSyllableList[currentSyllableIndex - 1].endsWith("\n")) {
-			addLinebreak = true;
+		if (currentQueueIndex > 0) {
+			int prevGlobal = activeSyllableIndices[currentQueueIndex - 1];
+			if (prevGlobal < lyricsSyllableList.size() && lyricsSyllableList[prevGlobal].endsWith("\n")) {
+				addLinebreak = true;
+			} else {
+				addLinebreak = false;
+			}
 		} else {
 			addLinebreak = false;
 		}
 
 		updateOutputLyrics();
 
-		if (currentSyllableIndex == 0 || erasedNoteStartMs < 0.0) {
+		if (currentQueueIndex == 0 || erasedNoteStartMs < 0.0) {
 			BASS_SetPosition(0.0);
 		} else {
 			double preRollTime = 1.0; // step 1.0 second before the erased note
@@ -1791,7 +2300,7 @@ void QUMainWindow::undoRow(bool pauseAfterUndo) {
 		ui->pushButton_Tap->setFocus(Qt::OtherFocusReason);
 	}
 
-	if (currentSyllableIndex <= 0) {
+	if (currentQueueIndex <= 0) {
 		BASS_SetPosition(0.0);
 		if (pauseAfterUndo && state == playing) {
 			state = QUMainWindow::paused;
@@ -1808,36 +2317,38 @@ void QUMainWindow::undoRow(bool pauseAfterUndo) {
 		return;
 	}
 
-	int lastMappedIdx = currentSyllableIndex - 1;
-	int rowStartIdx = lastMappedIdx;
-	while (rowStartIdx > 0 && !lyricsSyllableList[rowStartIdx - 1].endsWith("\n")) {
-		rowStartIdx--;
+	int lastMappedQueueIdx = currentQueueIndex - 1;
+	int rowStartQueueIdx = lastMappedQueueIdx;
+	while (rowStartQueueIdx > 0) {
+		int prevGlobal = activeSyllableIndices[rowStartQueueIdx - 1];
+		if (prevGlobal < lyricsSyllableList.size() && lyricsSyllableList[prevGlobal].endsWith("\n")) {
+			break;
+		}
+		rowStartQueueIdx--;
 	}
 
-	int numNotesToDelete = currentSyllableIndex - rowStartIdx;
+	int numNotesToDelete = currentQueueIndex - rowStartQueueIdx;
 	if (numNotesToDelete <= 0) {
 		return;
 	}
 
-	QMutableMapIterator<double, QString> i(timeLineMap);
-	i.toBack();
 	double earliestNoteStartMs = -1.0;
-	for (int k = 0; k < numNotesToDelete; ++k) {
-		if (i.hasPrevious()) {
-			i.previous();
-			if (i.key() >= 0.0) {
-				earliestNoteStartMs = i.key();
-				i.remove();
-			} else {
-				break;
+	for (int k = rowStartQueueIdx; k <= lastMappedQueueIdx; ++k) {
+		int gIdx = activeSyllableIndices[k];
+		if (syllableNotesMap.contains(gIdx)) {
+			double sTime = syllableNotesMap[gIdx].startTimeMs;
+			if (earliestNoteStartMs < 0.0 || sTime < earliestNoteStartMs) {
+				earliestNoteStartMs = sTime;
 			}
-		} else {
-			break;
+			timeLineMap.remove(sTime);
+			syllableNotesMap.remove(gIdx);
 		}
 	}
 
-	currentSyllableIndex = rowStartIdx;
-	if (currentSyllableIndex == 0) {
+	currentQueueIndex = rowStartQueueIdx;
+	currentSyllableIndex = (currentQueueIndex < activeSyllableIndices.size()) ? activeSyllableIndices[currentQueueIndex] : 0;
+
+	if (currentQueueIndex == 0) {
 		firstNote = true;
 		firstNoteStartBeat = 0;
 		currentNoteStartTime = 0;
@@ -1861,6 +2372,8 @@ void QUMainWindow::undoRow(bool pauseAfterUndo) {
 						qint32 prevStart = parts[0].toInt();
 						qint32 prevLen = parts[1].toInt();
 						previousNoteEndBeat = prevStart + prevLen;
+						currentNoteStartBeat = prevStart + firstNoteStartBeat;
+						currentNoteBeatLength = prevLen;
 					}
 				}
 			} else {
@@ -1872,15 +2385,20 @@ void QUMainWindow::undoRow(bool pauseAfterUndo) {
 	updateSyllableButtons();
 	lyricsProgressBar->setValue(qMax(0, lyricsProgressBar->value() - numNotesToDelete));
 
-	if (currentSyllableIndex > 0 && lyricsSyllableList[currentSyllableIndex - 1].endsWith("\n")) {
-		addLinebreak = true;
+	if (currentQueueIndex > 0) {
+		int prevGlobal = activeSyllableIndices[currentQueueIndex - 1];
+		if (prevGlobal < lyricsSyllableList.size() && lyricsSyllableList[prevGlobal].endsWith("\n")) {
+			addLinebreak = true;
+		} else {
+			addLinebreak = false;
+		}
 	} else {
 		addLinebreak = false;
 	}
 
 	updateOutputLyrics();
 
-	if (currentSyllableIndex == 0 || earliestNoteStartMs < 0.0) {
+	if (currentQueueIndex == 0 || earliestNoteStartMs < 0.0) {
 		BASS_SetPosition(0.0);
 	} else {
 		double preRollTime = 2.0; // step 2.0 seconds before the row's first note
@@ -1902,64 +2420,152 @@ void QUMainWindow::undoRow(bool pauseAfterUndo) {
 }
 
 void QUMainWindow::updateSyllableButtons() {
-	QString syllable = lyricsSyllableList[currentSyllableIndex];
-	syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-	ui->pushButton_Tap->setText(syllable);
+	bool isDark = QApplication::palette().color(QPalette::Window).lightness() < 128;
 
-	if (currentSyllableIndex+1 < numSyllables) {
-		syllable = lyricsSyllableList[currentSyllableIndex+1];
-		syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-		ui->pushButton_NextSyllable1->setText(syllable);
-	}
-	else {
-		ui->pushButton_NextSyllable1->setText("");
-	}
-	if (currentSyllableIndex+2 < numSyllables) {
-		syllable = lyricsSyllableList[currentSyllableIndex+2];
-		syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-		ui->pushButton_NextSyllable2->setText(syllable);
-	}
-	else {
-		ui->pushButton_NextSyllable2->setText("");
-	}
-	if (currentSyllableIndex+3 < numSyllables) {
-		syllable = lyricsSyllableList[currentSyllableIndex+3];
-		syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-		ui->pushButton_NextSyllable3->setText(syllable);
-	}
-	else {
-		ui->pushButton_NextSyllable3->setText("");
-	}
-	if (currentSyllableIndex+4 < numSyllables) {
-		syllable = lyricsSyllableList[currentSyllableIndex+4];
-		syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-		ui->pushButton_NextSyllable4->setText(syllable);
-	}
-	else {
-		ui->pushButton_NextSyllable4->setText("");
-	}
-	if (currentSyllableIndex+5 < numSyllables) {
-		syllable = lyricsSyllableList[currentSyllableIndex+5];
-		syllable.replace("\n", "¶").replace("•", "").replace("+", "");
-		ui->pushButton_NextSyllable5->setText(syllable);
-	}
-	else {
-		ui->pushButton_NextSyllable5->setText("");
-	}
+	// Precomputed stylesheets: [role: 0=Solo, 1=P1, 2=P2, 3=Both][dark: 0 or 1][isTap: 0 or 1]
+	static const auto buildStyleMap = []() {
+		std::array<std::array<std::array<QString, 2>, 2>, 4> map;
+		for (int r = 0; r <= 3; ++r) {
+			SingerRole role = static_cast<SingerRole>(r);
+			for (int d = 0; d < 2; ++d) {
+				bool dark = (d == 1);
+				for (int t = 0; t < 2; ++t) {
+					bool isTap = (t == 1);
+					if (role == SingerRole::Solo) {
+						map[r][d][t] = QString();
+					} else {
+						QColor tint = QUDuetSupport::roleTintColor(role, dark);
+						QColor accent = QUDuetSupport::roleAccentColor(role);
+						QColor text = QUDuetSupport::roleTextColor(role, dark);
+						int bw = isTap ? 3 : 2;
+						map[r][d][t] = QString("QPushButton { background-color: %1; color: %2; border: %3px solid %4; border-radius: 4px; font-weight: bold; }")
+							.arg(tint.name(), text.name(), QString::number(bw), accent.name());
+					}
+				}
+			}
+		}
+		return map;
+	};
+	static const auto styleMap = buildStyleMap();
+
+	auto updateButton = [&](QPushButton *btn, int queueOffset, bool isTap) {
+		int qIdx = currentQueueIndex + queueOffset;
+		if (qIdx >= 0 && qIdx < activeSyllableIndices.size()) {
+			int globalIdx = activeSyllableIndices[qIdx];
+			QString s = (globalIdx >= 0 && globalIdx < lyricsSyllableList.size()) ? lyricsSyllableList[globalIdx] : "";
+			s.replace("\n", "¶").replace("•", "").replace("+", "");
+			if (btn->text() != s) {
+				btn->setText(s);
+			}
+
+			SingerRole role = (isDuetSong && globalIdx >= 0 && globalIdx < lyricsSyllableRoles.size())
+				? lyricsSyllableRoles[globalIdx]
+				: SingerRole::Solo;
+
+			int appliedRole = btn->property("_appliedRole").isValid() ? btn->property("_appliedRole").toInt() : -999;
+			int appliedDark = btn->property("_appliedDark").isValid() ? btn->property("_appliedDark").toInt() : -1;
+			int roleInt = static_cast<int>(role);
+			int darkInt = isDark ? 1 : 0;
+			int tapInt = isTap ? 1 : 0;
+
+			if (appliedRole != roleInt || appliedDark != darkInt) {
+				btn->setProperty("_appliedRole", roleInt);
+				btn->setProperty("_appliedDark", darkInt);
+				btn->setStyleSheet(styleMap[roleInt][darkInt][tapInt]);
+			}
+		} else {
+			if (!btn->text().isEmpty()) {
+				btn->setText("");
+			}
+			int appliedRole = btn->property("_appliedRole").isValid() ? btn->property("_appliedRole").toInt() : -999;
+			if (appliedRole != -1) {
+				btn->setProperty("_appliedRole", -1);
+				btn->setStyleSheet("");
+			}
+		}
+	};
+
+	updateButton(ui->pushButton_Tap, 0, true);
+	updateButton(ui->pushButton_NextSyllable1, 1, false);
+	updateButton(ui->pushButton_NextSyllable2, 2, false);
+	updateButton(ui->pushButton_NextSyllable3, 3, false);
+	updateButton(ui->pushButton_NextSyllable4, 4, false);
+	updateButton(ui->pushButton_NextSyllable5, 5, false);
 }
 
 void QUMainWindow::splitLyricsIntoSyllables()
 {
 	lyricsSyllableList.clear();
-	QRegularExpression re("([^ •+\n-]+[ •+\n-]*)"); //todo: verify regular expression
-	QRegularExpressionMatchIterator i = re.globalMatch(lyricsString);
-	
-	while (i.hasNext()) {
-		QRegularExpressionMatch match = i.next();
-		QString syllable = match.captured(1);
-		
-		lyricsSyllableList << syllable;
+	lyricsSyllableRoles.clear();
+
+	QStringList lines = lyricsString.split('\n');
+	static const QRegularExpression re("([^ •+\n-]+[ •+\n-]*)");
+
+	for (int lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+		QString line = lines[lineIdx];
+		SingerRole lineRole = isDuetSong ? SingerRole::Both : SingerRole::Solo;
+
+		line = QUDuetSupport::stripRoleTag(line, &lineRole);
+		if (isDuetSong) {
+			if (lineRole == SingerRole::Solo) {
+				lineRole = SingerRole::Both;
+			}
+		} else {
+			lineRole = SingerRole::Solo;
+		}
+
+		if (line.trimmed().isEmpty())
+			continue;
+
+		bool isLastLine = (lineIdx == lines.size() - 1);
+
+		QRegularExpressionMatchIterator i = re.globalMatch(line);
+		QList<QString> lineSyllables;
+		while (i.hasNext()) {
+			QRegularExpressionMatch match = i.next();
+			lineSyllables << match.captured(1);
+		}
+
+		for (int sIdx = 0; sIdx < lineSyllables.size(); ++sIdx) {
+			QString syl = lineSyllables[sIdx];
+			if (!isLastLine && sIdx == lineSyllables.size() - 1 && !syl.endsWith('\n')) {
+				syl += '\n';
+			}
+			lyricsSyllableList << syl;
+			lyricsSyllableRoles << lineRole;
+		}
 	}
+}
+
+bool QUMainWindow::eventFilter(QObject *obj, QEvent *event) {
+	if ((obj == ui->plainTextEdit_InputLyrics || (ui->plainTextEdit_InputLyrics && obj == ui->plainTextEdit_InputLyrics->viewport())) &&
+	    event->type() == QEvent::KeyPress) {
+		QKeyEvent *ke = static_cast<QKeyEvent*>(event);
+		bool altOnly = (ke->modifiers() & (Qt::AltModifier | Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier)) == Qt::AltModifier;
+		if (altOnly && isDuetSong) {
+			if (ke->key() == Qt::Key_1) {
+				on_pushButton_RoleP1_clicked();
+				return true;
+			} else if (ke->key() == Qt::Key_2) {
+				on_pushButton_RoleP2_clicked();
+				return true;
+			} else if (ke->key() == Qt::Key_3) {
+				on_pushButton_RoleBoth_clicked();
+				return true;
+			}
+		}
+	} else if ((obj == ui->pushButton_RoleP1 || obj == ui->pushButton_RoleP2 || obj == ui->pushButton_RoleBoth) &&
+	           event->type() == QEvent::KeyPress) {
+		QKeyEvent *ke = static_cast<QKeyEvent*>(event);
+		if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) {
+			QPushButton *btn = qobject_cast<QPushButton*>(obj);
+			if (btn) {
+				btn->animateClick();
+				return true;
+			}
+		}
+	}
+	return QMainWindow::eventFilter(obj, event);
 }
 
 void QUMainWindow::keyPressEvent(QKeyEvent *event) {
@@ -2029,7 +2635,7 @@ void QUMainWindow::keyPressEvent(QKeyEvent *event) {
 			QWidget::keyPressEvent(event);
 		}
 	}
-	else if ((state == QUMainWindow::initialized || state == QUMainWindow::paused) && isFirstKeyPress) {
+	else if ((state == QUMainWindow::initialized || state == QUMainWindow::paused || state == QUMainWindow::stopped) && isFirstKeyPress) {
 		switch(event->key()) {
 		case Qt::Key_Space:
 		case Qt::Key_V:
@@ -2149,11 +2755,16 @@ void QUMainWindow::on_pushButton_PreviewPlayPause_clicked()
 {
 	if (previewState == QUMainWindow::initialized) {
 		previewState = QUMainWindow::playing;
-		_mediaStream = BASS_FX_TempoCreate(_mediaStream, BASS_FX_FREESOURCE);
-		bool result = BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, 0);
-		if (result) {
-			BASS_Play();
-			updatePreviewTime();
+		if (!_mediaStream && fileInfo_MP3 && fileInfo_MP3->exists()) {
+			_mediaStream = BASS_StreamCreateFile(FALSE, fileInfo_MP3->absoluteFilePath().toLocal8Bit().data(), 0, 0, BASS_STREAM_DECODE | BASS_STREAM_PRESCAN);
+		}
+		if (_mediaStream) {
+			_mediaStream = BASS_FX_TempoCreate(_mediaStream, BASS_FX_FREESOURCE);
+			bool result = BASS_ChannelSetAttribute(_mediaStream, BASS_ATTRIB_TEMPO, 0);
+			if (result) {
+				BASS_Play();
+				updatePreviewTime();
+			}
 		}
 		ui->pushButton_PreviewPlayPause->setIcon(QIcon(":/icons/control_pause_blue.png"));
 	}
@@ -2726,6 +3337,7 @@ void QUMainWindow::refreshMedia(bool preserveSelections)
 }
 
 void QUMainWindow::montyTalk(bool force) {
+	Q_UNUSED(force);
 	//if(!force && !_menu->montyBtn->isChecked())
 	//	return;
 

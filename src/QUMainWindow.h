@@ -12,6 +12,9 @@
 #include <QTime>
 #include <QProgressBar>
 #include <QFileInfo>
+#include <QShortcut>
+#include "song/QUDuetSupport.h"
+#include "song/QUDuetHighlighter.h"
 
 //class QURibbonBar;
 
@@ -29,6 +32,7 @@ protected:
 	virtual void closeEvent(QCloseEvent *event);
 	void dragEnterEvent(QDragEnterEvent *event);
 	void dropEvent(QDropEvent *event);
+	bool eventFilter(QObject *obj, QEvent *event) override;
 
 private slots:
 	void initConfig();
@@ -80,6 +84,12 @@ private slots:
 	void on_comboBox_Language_currentTextChanged(QString );
 	void on_lineEdit_Title_textChanged(QString );
 	void on_lineEdit_Artist_textChanged(QString );
+	void on_checkBox_DuetSong_toggled(bool checked);
+	void on_lineEdit_SingerP1_textChanged(const QString &text);
+	void on_lineEdit_SingerP2_textChanged(const QString &text);
+	void on_pushButton_RoleP1_clicked();
+	void on_pushButton_RoleP2_clicked();
+	void on_pushButton_RoleBoth_clicked();
 
 	void on_actionQuit_USC_triggered();
 	void on_pushButton_BrowseMP3_clicked();
@@ -192,6 +202,29 @@ private:
 	QString lastSelectedBackground;
 	QString lastSelectedVideo;
 	void updateOutputLyrics();
+	void updateDuetWidgetsVisibility();
+	void assignRoleToSelectedLines(SingerRole role);
+	void updateTapFilterSummary();
+	void buildActiveSyllableQueue();
+	void onTapFilterChanged();
+	bool isDuetSong;
+	QList<SingerRole> lyricsSyllableRoles;
+	QUDuetHighlighter *duetHighlighter;
+
+	QMenu *menu_TapRoleFilter;
+	QAction *actionTapP1;
+	QAction *actionTapP2;
+	QAction *actionTapBoth;
+	QAction *actionSelectAll;
+	QAction *actionSelectP1AndBoth;
+	QAction *actionSelectP2AndBoth;
+	QAction *actionSelectP1Only;
+	QAction *actionSelectP2Only;
+	QAction *actionSelectBothOnly;
+
+	QMap<int, TappedNote> syllableNotesMap;
+	QList<int> activeSyllableIndices;
+	int currentQueueIndex;
 };
 
 #endif // QCMAINWINDOW_H
