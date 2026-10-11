@@ -36,6 +36,8 @@ HEADERS += main.h \
 	song/QUSongInterface.h \
 	song/QUSongFile.h \
 	song/QUSongDatabase.h \
+	song/QUDuetSupport.h \
+	song/QUDuetHighlighter.h \
 	QUStringSupport.h
 
 SOURCES += main.cpp \
@@ -50,6 +52,8 @@ SOURCES += main.cpp \
 	song/QUSongLine.cpp \
 	song/QUSongFile.cpp \
 	song/QUSongDatabase.cpp \
+	song/QUDuetSupport.cpp \
+	song/QUDuetHighlighter.cpp \
 	QUStringSupport.cpp
 
 FORMS += QUMainWindow.ui \
