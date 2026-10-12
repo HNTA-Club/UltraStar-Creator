@@ -37,6 +37,8 @@ public:
 	QString artist() const			{return _info.value(ARTIST_TAG,				QString(N_A));}
 	QString title() const			{return _info.value(TITLE_TAG,				QString(N_A));}
 	QString mp3() const				{return _info.value(MP3_TAG,				QString(N_A));}
+	QString instrumental() const	{return _info.value(INSTRUMENTAL_TAG,		QString(N_A));}
+	QString vocals() const			{return _info.value(VOCALS_TAG,				QString(N_A));}
 	QString bpm() const				{return _info.value(BPM_TAG,				QString(N_A));}
 	QString gap() const				{return _info.value(GAP_TAG,				QString(N_A));}
 	QString video() const			{return _info.value(VIDEO_TAG,				QString(N_A));}

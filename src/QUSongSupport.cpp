@@ -22,6 +22,8 @@ QStringList QUSongSupport::availableTags() {
 	result << YEAR_TAG;
 	result << CREATOR_TAG;
 	result << MP3_TAG;
+	result << INSTRUMENTAL_TAG;
+	result << VOCALS_TAG;
 	result << COVER_TAG;
 	result << BACKGROUND_TAG;
 	result << VIDEO_TAG;

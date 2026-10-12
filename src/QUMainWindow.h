@@ -112,6 +112,8 @@ private slots:
 	void on_comboBox_Cover_currentTextChanged(const QString &cover);
 	void on_comboBox_Background_currentTextChanged(const QString &background);
 	void on_comboBox_Video_currentTextChanged(const QString &video);
+	void on_comboBox_Instrumental_currentTextChanged(const QString &instrumental);
+	void on_comboBox_Vocals_currentTextChanged(const QString &vocals);
 	
 	void setDefaultPitch(int pitch);
 
@@ -201,6 +203,8 @@ private:
 	QString lastSelectedCover;
 	QString lastSelectedBackground;
 	QString lastSelectedVideo;
+	QString lastSelectedInstrumental;
+	QString lastSelectedVocals;
 	void updateOutputLyrics();
 	void updateDuetWidgetsVisibility();
 	void assignRoleToSelectedLines(SingerRole role);

@@ -18,6 +18,8 @@ class QFileInfo;
 #define YEAR_TAG				"YEAR"
 #define CREATOR_TAG				"CREATOR"
 #define MP3_TAG					"MP3"
+#define INSTRUMENTAL_TAG		"INSTRUMENTAL"
+#define VOCALS_TAG				"VOCALS"
 #define COVER_TAG				"COVER"
 #define BACKGROUND_TAG			"BACKGROUND"
 #define VIDEO_TAG				"VIDEO"

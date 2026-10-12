@@ -46,6 +46,8 @@ QUMainWindow::QUMainWindow(QWidget *parent): QMainWindow(parent), ui(new Ui::QUM
 	lastSelectedCover = "";
 	lastSelectedBackground = "";
 	lastSelectedVideo = "";
+	lastSelectedInstrumental = "";
+	lastSelectedVocals = "";
 
 	connect(ui->horizontalSlider_PlaybackSpeed, SIGNAL(valueChanged(int)), this, SLOT(setPlaybackSpeed(int)));
 	connect(ui->comboBox_Cover, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
@@ -60,6 +62,16 @@ QUMainWindow::QUMainWindow(QWidget *parent): QMainWindow(parent), ui(new Ui::QUM
 	});
 	connect(ui->comboBox_Video, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
 		if (ui->comboBox_Video->itemText(index) == tr("[Refresh...]")) {
+			refreshMedia(true);
+		}
+	});
+	connect(ui->comboBox_Instrumental, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		if (ui->comboBox_Instrumental->itemText(index) == tr("[Refresh...]")) {
+			refreshMedia(true);
+		}
+	});
+	connect(ui->comboBox_Vocals, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		if (ui->comboBox_Vocals->itemText(index) == tr("[Refresh...]")) {
 			refreshMedia(true);
 		}
 	});
@@ -576,6 +588,12 @@ void QUMainWindow::on_pushButton_PlayPause_clicked()
 			timeLineMap.insert(-8, QString("#CREATOR:%1").arg(ui->lineEdit_Creator->text()));
 		}
 		timeLineMap.insert(-7, QString("#MP3:%1").arg(ui->lineEdit_MP3->text()));
+		if (!ui->comboBox_Instrumental->currentText().isEmpty() && ui->comboBox_Instrumental->currentText() != tr("[Refresh...]")) {
+			timeLineMap.insert(-6.7, QString("#INSTRUMENTAL:%1").arg(ui->comboBox_Instrumental->currentText()));
+		}
+		if (!ui->comboBox_Vocals->currentText().isEmpty() && ui->comboBox_Vocals->currentText() != tr("[Refresh...]")) {
+			timeLineMap.insert(-6.4, QString("#VOCALS:%1").arg(ui->comboBox_Vocals->currentText()));
+		}
 		if (!ui->comboBox_Cover->currentText().isEmpty() && ui->comboBox_Cover->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-6, QString("#COVER:%1").arg(ui->comboBox_Cover->currentText()));
 		}
@@ -1017,10 +1035,20 @@ void QUMainWindow::dropEvent( QDropEvent* event ) {
 					}
 					else if(QUSongSupport::allowedAudioFiles().contains(fileScheme, Qt::CaseInsensitive)) {
 						if (fileInfo.exists()) {
-							defaultDir = fileInfo.absolutePath();
-							fileInfo_MP3 = new QFileInfo(fileName);
+							if (fileInfo_MP3 && fileInfo_MP3->exists() && (fileInfo.fileName().contains("inst", Qt::CaseInsensitive) || fileInfo.fileName().contains("karaoke", Qt::CaseInsensitive) || fileInfo.fileName().contains("voc", Qt::CaseInsensitive) || fileInfo.fileName().contains("acapella", Qt::CaseInsensitive))) {
+								QString destPath = QDir(fileInfo_MP3->absolutePath()).filePath(fileInfo.fileName());
+								if (QDir::toNativeSeparators(fileInfo.absoluteFilePath()) != QDir::toNativeSeparators(destPath)) {
+									if (!QFile::exists(destPath)) {
+										QFile::copy(fileInfo.absoluteFilePath(), destPath);
+									}
+								}
+								refreshMedia(true);
+							} else {
+								defaultDir = fileInfo.absolutePath();
+								fileInfo_MP3 = new QFileInfo(fileName);
 
-							handleMP3();
+								handleMP3();
+							}
 						}
 					}
 				}
@@ -1109,6 +1137,7 @@ void QUMainWindow::updateDuetWidgetsVisibility()
 	ui->label_SingerP2Set->setVisible(showDuet);
 	ui->widget_DuetRoleToolbar->setVisible(showDuet);
 	ui->widget_TapRoleFilter->setVisible(showDuet);
+	ui->groupBox_Artist_Title->setMinimumHeight(showDuet ? 120 : 70);
 
 	if (duetHighlighter) {
 		duetHighlighter->setDuetEnabled(showDuet);
@@ -1454,6 +1483,12 @@ void QUMainWindow::on_pushButton_BrowseSubtitles_clicked()
 			timeLineMap.insert(-8, QString("#CREATOR:%1").arg(ui->lineEdit_Creator->text()));
 		}
 		timeLineMap.insert(-7, QString("#MP3:%1").arg(ui->lineEdit_MP3->text()));
+		if (!ui->comboBox_Instrumental->currentText().isEmpty() && ui->comboBox_Instrumental->currentText() != tr("[Refresh...]")) {
+			timeLineMap.insert(-6.7, QString("#INSTRUMENTAL:%1").arg(ui->comboBox_Instrumental->currentText()));
+		}
+		if (!ui->comboBox_Vocals->currentText().isEmpty() && ui->comboBox_Vocals->currentText() != tr("[Refresh...]")) {
+			timeLineMap.insert(-6.4, QString("#VOCALS:%1").arg(ui->comboBox_Vocals->currentText()));
+		}
 		if (!ui->comboBox_Cover->currentText().isEmpty() && ui->comboBox_Cover->currentText() != tr("[Refresh...]")) {
 			timeLineMap.insert(-6, QString("#COVER:%1").arg(ui->comboBox_Cover->currentText()));
 		}
@@ -1753,6 +1788,8 @@ void QUMainWindow::handleMP3() {
 	ui->comboBox_Cover->clear();
 	ui->comboBox_Background->clear();
 	ui->comboBox_Video->clear();
+	ui->comboBox_Instrumental->clear();
+	ui->comboBox_Vocals->clear();
 	ui->doubleSpinBox_BPM->clear();
 
 	ui->lineEdit_MP3->setText(fileInfo_MP3->fileName());
@@ -1874,6 +1911,14 @@ void QUMainWindow::handleMP3() {
 	ui->label_MP3->setEnabled(enabled);
 	ui->lineEdit_MP3->setEnabled(enabled);
 	ui->label_MP3Set->setEnabled(enabled);
+	ui->label_InstrumentalIcon->setEnabled(enabled);
+	ui->label_Instrumental->setEnabled(enabled);
+	ui->comboBox_Instrumental->setEnabled(enabled);
+	ui->label_InstrumentalSet->setEnabled(enabled);
+	ui->label_VocalsIcon->setEnabled(enabled);
+	ui->label_Vocals->setEnabled(enabled);
+	ui->comboBox_Vocals->setEnabled(enabled);
+	ui->label_VocalsSet->setEnabled(enabled);
 	ui->label_CoverIcon->setEnabled(enabled);
 	ui->label_Cover->setEnabled(enabled);
 	ui->comboBox_Cover->setEnabled(enabled);
@@ -3212,6 +3257,30 @@ void QUMainWindow::on_comboBox_Video_currentTextChanged(const QString &video)
 		ui->label_VideoSet->setPixmap(QPixmap(":/icons/path_error.png"));
 }
 
+void QUMainWindow::on_comboBox_Instrumental_currentTextChanged(const QString &instrumental)
+{
+	if (instrumental == tr("[Refresh...]")) {
+		return;
+	}
+	lastSelectedInstrumental = instrumental;
+	if(!instrumental.isEmpty())
+		ui->label_InstrumentalSet->setPixmap(QPixmap(":/icons/path_ok.png"));
+	else
+		ui->label_InstrumentalSet->setPixmap(QPixmap(":/icons/path_error.png"));
+}
+
+void QUMainWindow::on_comboBox_Vocals_currentTextChanged(const QString &vocals)
+{
+	if (vocals == tr("[Refresh...]")) {
+		return;
+	}
+	lastSelectedVocals = vocals;
+	if(!vocals.isEmpty())
+		ui->label_VocalsSet->setPixmap(QPixmap(":/icons/path_ok.png"));
+	else
+		ui->label_VocalsSet->setPixmap(QPixmap(":/icons/path_error.png"));
+}
+
 void QUMainWindow::refreshMedia(bool preserveSelections)
 {
 	if (!fileInfo_MP3 || !fileInfo_MP3->exists()) {
@@ -3223,10 +3292,13 @@ void QUMainWindow::refreshMedia(bool preserveSelections)
 
 	QStringList imageFiles = QDir(songDir).entryList(QUSongSupport::allowedImageFiles());
 	QStringList videoFiles = QDir(songDir).entryList(QUSongSupport::allowedVideoFiles());
+	QStringList audioFiles = QDir(songDir).entryList(QUSongSupport::allowedAudioFiles());
 
 	QString prevCover = (ui->comboBox_Cover->currentText() != tr("[Refresh...]")) ? ui->comboBox_Cover->currentText() : lastSelectedCover;
 	QString prevBackground = (ui->comboBox_Background->currentText() != tr("[Refresh...]")) ? ui->comboBox_Background->currentText() : lastSelectedBackground;
 	QString prevVideo = (ui->comboBox_Video->currentText() != tr("[Refresh...]")) ? ui->comboBox_Video->currentText() : lastSelectedVideo;
+	QString prevInstrumental = (ui->comboBox_Instrumental->currentText() != tr("[Refresh...]")) ? ui->comboBox_Instrumental->currentText() : lastSelectedInstrumental;
+	QString prevVocals = (ui->comboBox_Vocals->currentText() != tr("[Refresh...]")) ? ui->comboBox_Vocals->currentText() : lastSelectedVocals;
 
 	const QString refreshLabel = tr("[Refresh...]");
 	QIcon reloadIcon = style()->standardIcon(QStyle::SP_BrowserReload);
@@ -3251,6 +3323,20 @@ void QUMainWindow::refreshMedia(bool preserveSelections)
 	ui->comboBox_Video->addItem("");
 	ui->comboBox_Video->addItems(videoFiles);
 	ui->comboBox_Video->addItem(reloadIcon, refreshLabel);
+
+	// Populate Instrumental combobox
+	ui->comboBox_Instrumental->blockSignals(true);
+	ui->comboBox_Instrumental->clear();
+	ui->comboBox_Instrumental->addItem("");
+	ui->comboBox_Instrumental->addItems(audioFiles);
+	ui->comboBox_Instrumental->addItem(reloadIcon, refreshLabel);
+
+	// Populate Vocals combobox
+	ui->comboBox_Vocals->blockSignals(true);
+	ui->comboBox_Vocals->clear();
+	ui->comboBox_Vocals->addItem("");
+	ui->comboBox_Vocals->addItems(audioFiles);
+	ui->comboBox_Vocals->addItem(reloadIcon, refreshLabel);
 
 	// --- Cover Selection ---
 	int coverIndex = -1;
@@ -3322,17 +3408,71 @@ void QUMainWindow::refreshMedia(bool preserveSelections)
 		lastSelectedVideo.clear();
 	}
 
+	// --- Instrumental Selection ---
+	int instIndex = -1;
+	if (preserveSelections && !prevInstrumental.isEmpty()) {
+		instIndex = ui->comboBox_Instrumental->findText(prevInstrumental);
+	}
+	if (instIndex <= 0 && !audioFiles.isEmpty()) {
+		for (int i = 0; i < audioFiles.size(); ++i) {
+			const QString &fn = audioFiles[i];
+			if (fileInfo_MP3 && fn.compare(fileInfo_MP3->fileName(), Qt::CaseInsensitive) == 0) {
+				continue;
+			}
+			if (fn.contains("instrumental", Qt::CaseInsensitive) || fn.contains("karaoke", Qt::CaseInsensitive) || fn.contains("[inst]", Qt::CaseInsensitive) || fn.contains("inst.", Qt::CaseInsensitive) || fn.contains("_inst", Qt::CaseInsensitive) || fn.contains("-inst", Qt::CaseInsensitive)) {
+				instIndex = i + 1;
+				break;
+			}
+		}
+	}
+	if (instIndex > 0 && instIndex < ui->comboBox_Instrumental->count() - 1) {
+		ui->comboBox_Instrumental->setCurrentIndex(instIndex);
+		lastSelectedInstrumental = ui->comboBox_Instrumental->currentText();
+	} else {
+		ui->comboBox_Instrumental->setCurrentIndex(0);
+		lastSelectedInstrumental.clear();
+	}
+
+	// --- Vocals Selection ---
+	int vocalsIndex = -1;
+	if (preserveSelections && !prevVocals.isEmpty()) {
+		vocalsIndex = ui->comboBox_Vocals->findText(prevVocals);
+	}
+	if (vocalsIndex <= 0 && !audioFiles.isEmpty()) {
+		for (int i = 0; i < audioFiles.size(); ++i) {
+			const QString &fn = audioFiles[i];
+			if (fileInfo_MP3 && fn.compare(fileInfo_MP3->fileName(), Qt::CaseInsensitive) == 0) {
+				continue;
+			}
+			if (fn.contains("vocals", Qt::CaseInsensitive) || fn.contains("acapella", Qt::CaseInsensitive) || fn.contains("accapella", Qt::CaseInsensitive) || fn.contains("vocal", Qt::CaseInsensitive) || fn.contains("vox", Qt::CaseInsensitive) || fn.contains("[voc]", Qt::CaseInsensitive)) {
+				vocalsIndex = i + 1;
+				break;
+			}
+		}
+	}
+	if (vocalsIndex > 0 && vocalsIndex < ui->comboBox_Vocals->count() - 1) {
+		ui->comboBox_Vocals->setCurrentIndex(vocalsIndex);
+		lastSelectedVocals = ui->comboBox_Vocals->currentText();
+	} else {
+		ui->comboBox_Vocals->setCurrentIndex(0);
+		lastSelectedVocals.clear();
+	}
+
 	ui->comboBox_Cover->blockSignals(false);
 	ui->comboBox_Background->blockSignals(false);
 	ui->comboBox_Video->blockSignals(false);
+	ui->comboBox_Instrumental->blockSignals(false);
+	ui->comboBox_Vocals->blockSignals(false);
 
 	// Update indicator pixmaps
 	on_comboBox_Cover_currentTextChanged(ui->comboBox_Cover->currentText());
 	on_comboBox_Background_currentTextChanged(ui->comboBox_Background->currentText());
 	on_comboBox_Video_currentTextChanged(ui->comboBox_Video->currentText());
+	on_comboBox_Instrumental_currentTextChanged(ui->comboBox_Instrumental->currentText());
+	on_comboBox_Vocals_currentTextChanged(ui->comboBox_Vocals->currentText());
 
 	if (preserveSelections) {
-		logSrv->add(tr("Media refreshed: %1 image(s), %2 video(s) found.").arg(imageFiles.count()).arg(videoFiles.count()), QU::Information);
+		logSrv->add(tr("Media refreshed: %1 image(s), %2 video(s), %3 audio file(s) found.").arg(imageFiles.count()).arg(videoFiles.count()).arg(audioFiles.count()), QU::Information);
 	}
 }
 
