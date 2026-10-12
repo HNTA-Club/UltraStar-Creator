@@ -1,4 +1,29 @@
 <------------------------------------->
+< Changelog (1.4.0 to 1.5.0 - Takai)  >
+<------------------------------------->
+~#~#~#~#~#~#~#~#~#~#~#~#~#~#  NEW FEATURES  #~#~#~#~#~#~#~#~#~#~#~#~#~#~
+DUET SONGS
+* UltraStar Duet 2-singer song support (#DUETSINGERP1, #DUETSINGERP2).
+* Role assignment hotkeys: Alt+1 (Singer 1), Alt+2 (Singer 2), Alt+3 (Both).
+* Real-time lyrics syntax highlighter for singer tags ([P1], [P2], [Both]).
+* Duet tap role filtering: tap syllables for specific singer roles.
+* Two-pass monotonic track serialization and beat alignment.
+
+AUDIO & STEMS
+* Added #INSTRUMENTAL and #VOCALS audio tag support in header and export.
+* Auto-detection heuristics and drag-and-drop for instrumental/vocals stem files.
+* BASS_STREAM_PRESCAN enabled on all audio streams for sample-accurate VBR MP3 seeking.
+
+UI & CONTROLS
+* Redesigned tapping controls: playback speed row above centered media buttons.
+* Dynamic height adjustment for Singer 1 & 2 in Duet mode.
+* Compact Browse button and layout breathing room for Sirkka the mascot.
+
+~#~#~#~#~#~#~#~#~#~#~#~#~#~#~#  CHANGES & FIXES  ~#~#~#~#~#~#~#~#~#~#~#~#~#~#~#~
+* Fixed previousNoteEndBeat undo recalculation bug on note rewinds.
+* Enforced strictly monotonic linebreaks and clamped boundary ranges.
+
+<------------------------------------->
 < Changelog (1.3.1 to 1.4.0 - Takai)  >
 <------------------------------------->
 ~#~#~#~#~#~#~#~#~#~#~#~#~#~#  NEW FEATURES  #~#~#~#~#~#~#~#~#~#~#~#~#~#~
