@@ -114,7 +114,6 @@ fn render_track(
         start: i64,
         len: i64,
         text: &'a str,
-        line_end: bool,
     }
 
     let mut track: Vec<RenderNote<'_>> = notes
@@ -131,7 +130,6 @@ fn render_track(
                 start: start.max(0),
                 len: len.max(1),
                 text: &syl.text,
-                line_end: syl.line_end,
             })
         })
         .collect();
@@ -141,9 +139,10 @@ fn render_track(
     }
 
     track.sort_by_key(|rn| rn.syllable_idx);
+    let break_between = |a: usize, b: usize| (a..b).any(|idx| syllables[idx].line_end);
 
     for i in 1..track.len() {
-        let need_break = track[i - 1].line_end;
+        let need_break = break_between(track[i - 1].syllable_idx, track[i].syllable_idx);
         let min_start = track[i - 1].start + if need_break { 2 } else { 1 };
         if track[i].start < min_start {
             track[i].start = min_start;
@@ -157,7 +156,7 @@ fn render_track(
     for i in 0..track.len() {
         let rn = &track[i];
         lines.push(format!(": {} {} 0 {}", rn.start, rn.len, rn.text));
-        if rn.line_end && i + 1 < track.len() {
+        if i + 1 < track.len() && break_between(rn.syllable_idx, track[i + 1].syllable_idx) {
             let prev_end = rn.start + rn.len;
             let next_start = track[i + 1].start;
             let mid = prev_end + (next_start - prev_end) / 2;
@@ -281,5 +280,15 @@ mod tests {
         assert!(out.contains(
             "#DUETSINGERP1:Singer 1\n#P1:Singer 1\n#DUETSINGERP2:Singer 2\n#P2:Singer 2\nP 1\nP 2\nE\n"
         ));
+    }
+
+    #[test]
+    fn duet_shared_line_emits_linebreak() {
+        let mut hd = h();
+        hd.duet = Some(("Ann".into(), "Bob".into()));
+        let syl = [s("Foo ", P1, false), s("Bar", P2, true), s("Baz", P1, true)];
+        let notes = [n(0, 1000.0, 100.0), n(1, 1200.0, 100.0), n(2, 2000.0, 100.0)];
+        let out = render(&hd, &syl, &notes);
+        assert!(out.contains("P 1\n: 0 2 0 Foo \n- 11\n: 20 2 0 Baz\n"), "got:\n{out}");
     }
 }

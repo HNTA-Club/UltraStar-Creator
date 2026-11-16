@@ -106,7 +106,10 @@ impl Session {
             return 0.0;
         }
         let mut start = self.pos - 1;
-        while start > 0 && !self.syllables[self.queue[start - 1]].line_end {
+        while start > 0
+            && !(self.queue[start - 1]..self.queue[start])
+                .any(|idx| self.syllables[idx].line_end)
+        {
             start -= 1;
         }
 
@@ -261,5 +264,22 @@ mod tests {
             p2.notes().iter().map(|n| n.syllable).collect::<Vec<_>>(),
             [0, 1, 2]
         );
+    }
+
+    #[test]
+    fn undo_row_filtered_stops_at_line_boundary() {
+        let syl = vec![
+            Syllable { text: "a".into(), role: Role::P1, line_end: false },
+            Syllable { text: "b".into(), role: Role::P2, line_end: true },
+            Syllable { text: "c".into(), role: Role::P1, line_end: true },
+        ];
+        let mut s = Session::new(syl, Filter::P1Only, vec![]);
+        s.press(1000.0);
+        s.release(1100.0);
+        s.press(3000.0);
+        s.release(3100.0);
+        assert_eq!(s.undo_row(), 1000.0);
+        assert_eq!(s.current(), Some(2));
+        assert_eq!(s.notes().len(), 1);
     }
 }
