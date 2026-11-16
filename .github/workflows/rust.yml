@@ -1,0 +1,26 @@
+name: Rust
+on:
+  push:
+    paths: ['usc/**', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['usc/**', '.github/workflows/rust.yml']
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: usc
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: usc
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
