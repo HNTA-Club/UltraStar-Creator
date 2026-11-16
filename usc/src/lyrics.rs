@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Solo,
@@ -100,6 +102,56 @@ pub fn syllables(text: &str, duet: bool) -> Vec<Syllable> {
     out
 }
 
+pub fn syllabify(text: &str, dictionary: &str) -> String {
+    let mut dict: HashMap<String, &str> = HashMap::new();
+    for line in dictionary.lines() {
+        let entry = line.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let key = entry.to_lowercase().replace('•', "");
+        dict.insert(key, entry);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+
+    for ch in text.chars() {
+        if is_word_delim(ch) {
+            flush_word(&mut word, &dict, &mut out);
+            out.push(ch);
+        } else {
+            word.push(ch);
+        }
+    }
+    flush_word(&mut word, &dict, &mut out);
+    out
+}
+
+fn is_word_delim(c: char) -> bool {
+    matches!(c, ' ' | '\n' | ',' | '!' | '.' | '?' | '(' | ')' | ';' | ':' | '-')
+}
+
+fn flush_word(word: &mut String, dict: &HashMap<String, &str>, out: &mut String) {
+    if word.is_empty() {
+        return;
+    }
+    if let Some(&entry) = dict.get(&word.to_lowercase()) {
+        let mut entry_chars = entry.chars();
+        if word.chars().next().is_some_and(char::is_uppercase) {
+            if let Some(first) = entry_chars.next() {
+                out.extend(first.to_uppercase());
+            }
+            out.push_str(entry_chars.as_str());
+        } else {
+            out.push_str(entry);
+        }
+    } else {
+        out.push_str(word);
+    }
+    word.clear();
+}
+
 fn is_syllable_sep(c: char) -> bool {
     matches!(c, ' ' | '•' | '+' | '-')
 }
@@ -187,5 +239,24 @@ mod tests {
         assert_eq!(t, ["Grü", "ße ", "’n"]);
         assert!(syllables("", false).is_empty());
         assert!(syllables("\n  \n", true).is_empty());
+    }
+
+    #[test]
+    fn syllabify_whole_words_only() {
+        let dict = "ne•ver\r\nwhen•e•ver\n\n";
+        assert_eq!(
+            syllabify("Never whenever, ok. never-ever", dict),
+            "Ne•ver when•e•ver, ok. ne•ver-ever"
+        );
+    }
+
+    #[test]
+    fn syllabify_keeps_capital_non_ascii() {
+        assert_eq!(syllabify("Été straße", "é•té\nstra•ße"), "É•té stra•ße");
+    }
+
+    #[test]
+    fn syllabify_leaves_unknown_and_presplit_words() {
+        assert_eq!(syllabify("Hel•lo zzz\n", "hel•lo"), "Hel•lo zzz\n");
     }
 }
