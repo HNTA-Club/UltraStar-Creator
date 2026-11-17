@@ -152,6 +152,53 @@ pub fn scan_folder(audio_path: &Path) -> FolderMedia {
     media
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageSlot {
+    Cover,
+    Background,
+}
+
+impl ImageSlot {
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Cover => "[CO]",
+            Self::Background => "[BG]",
+        }
+    }
+}
+
+pub fn is_near_square(width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let ratio = width as f64 / height as f64;
+    (0.85..=1.18).contains(&ratio)
+}
+
+pub fn save_image_as_slot(
+    bytes: &[u8],
+    song_dir: &Path,
+    base_name: &str,
+    slot: ImageSlot,
+) -> Result<(String, u32, u32), String> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| format!("Failed to decode dropped image: {e}"))?;
+    let w = img.width();
+    let h = img.height();
+    let clean_base = crate::stems::sanitize_filename_part(base_name);
+    let stem = if clean_base.is_empty() {
+        "song"
+    } else {
+        clean_base.as_str()
+    };
+    let filename = format!("{stem} {}.jpg", slot.suffix());
+    let dest = song_dir.join(&filename);
+    img.to_rgb8()
+        .save_with_format(&dest, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to save {}: {e}", dest.display()))?;
+    Ok((filename, w, h))
+}
+
 pub fn dictionaries_dir() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe()
@@ -424,5 +471,25 @@ mod tests {
         let g2 = scan_folder(&mp3_2);
         assert_eq!(g2.cover.as_deref(), Some("b.jpg"));
         assert_eq!(g2.background.as_deref(), Some("a.jpg"));
+    }
+
+    #[test]
+    fn near_square_and_save_image_as_jpeg_slot() {
+        assert!(is_near_square(640, 640));
+        assert!(is_near_square(600, 540));
+        assert!(!is_near_square(1280, 720));
+        assert!(!is_near_square(0, 100));
+
+        let dir = TempDir::new().unwrap();
+        let img = image::RgbImage::from_pixel(4, 4, image::Rgb([120, 40, 200]));
+        let mut png_bytes = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .unwrap();
+
+        let (name, w, h) =
+            save_image_as_slot(&png_bytes, dir.path(), "YOASOBI - Idol", ImageSlot::Cover).unwrap();
+        assert_eq!(name, "YOASOBI - Idol [CO].jpg");
+        assert_eq!((w, h), (4, 4));
+        assert!(dir.path().join(&name).is_file());
     }
 }

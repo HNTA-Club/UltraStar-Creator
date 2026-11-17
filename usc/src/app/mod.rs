@@ -14,12 +14,15 @@ use eframe::egui;
 use crate::app::waveform::WaveformConfig;
 use crate::audio::{AudioEngine, WaveformPeaks};
 use crate::lyrics::{Role, clean, syllabify, syllables};
-use crate::media::{FolderMedia, detect_language, dictionaries_dir, read_tags, scan_folder};
+use crate::media::{
+    FolderMedia, ImageSlot, detect_language, dictionaries_dir, is_near_square, read_tags,
+    save_image_as_slot, scan_folder,
+};
 use crate::romaji::{RomajiConfig, contains_japanese, convert_text};
 use crate::song::{Header, render};
 use crate::stems::{
     ComputeDevice, SourceMode, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, get_ytdlp_path,
-    process_media, run_tools_setup,
+    process_media, resolve_base_name, run_tools_setup,
 };
 use crate::tapping::{Filter, Note, Session};
 
@@ -76,6 +79,12 @@ pub enum MonitorTrack {
 enum FinishModal {
     DuetPass { tapped: usize, total: usize },
     SongComplete,
+}
+
+struct PendingDroppedImage {
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
 }
 
 struct StemsModalState {
@@ -153,6 +162,7 @@ pub struct UscApp {
     status: String,
     error_banner: Option<String>,
     finish_modal: Option<FinishModal>,
+    pending_image: Option<PendingDroppedImage>,
     stems_modal: StemsModalState,
 }
 
@@ -223,6 +233,7 @@ impl UscApp {
             status: "Open or drop an audio/video file to begin.".into(),
             error_banner,
             finish_modal: None,
+            pending_image: None,
             stems_modal: StemsModalState::default(),
         };
 
@@ -1338,6 +1349,55 @@ impl UscApp {
         }
     }
 
+    fn save_dropped_image(&mut self, bytes: &[u8], slot: ImageSlot) {
+        let Some(audio_path) = &self.audio_path else {
+            self.status = "Load or prepare a song first before dropping a Cover/Background image.".into();
+            return;
+        };
+        let Some(song_dir) = audio_path.parent() else {
+            return;
+        };
+        let fallback = audio_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("song");
+        let base_name = resolve_base_name(&self.header.artist, &self.header.title, fallback);
+        match save_image_as_slot(bytes, song_dir, &base_name, slot) {
+            Ok((filename, w, h)) => {
+                match slot {
+                    ImageSlot::Cover => self.header.cover = filename.clone(),
+                    ImageSlot::Background => self.header.background = filename.clone(),
+                }
+                self.refresh_media();
+                self.status = format!("Saved {filename} ({w}×{h}).");
+            }
+            Err(err) => {
+                self.status = err;
+            }
+        }
+    }
+
+    fn process_dropped_image(&mut self, bytes: Vec<u8>) {
+        if self.audio_path.is_none() {
+            self.status = "Load or prepare a song first before dropping a Cover/Background image.".into();
+            return;
+        }
+        let Ok(img) = image::load_from_memory(&bytes) else {
+            self.status = "Dropped file could not be decoded as an image.".into();
+            return;
+        };
+        let (w, h) = (img.width(), img.height());
+        if is_near_square(w, h) {
+            self.save_dropped_image(&bytes, ImageSlot::Cover);
+        } else {
+            self.pending_image = Some(PendingDroppedImage {
+                bytes,
+                width: w,
+                height: h,
+            });
+        }
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         if matches!(self.state, PlaybackState::Playing | PlaybackState::Paused) {
             return;
@@ -1359,7 +1419,13 @@ impl UscApp {
                     self.open_stems_modal(Some(path));
                 } else if ext == "txt" {
                     self.load_lyrics_file(&path);
+                } else if matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif")
+                    && let Ok(bytes) = std::fs::read(&path)
+                {
+                    self.process_dropped_image(bytes);
                 }
+            } else if let Some(bytes) = file.bytes {
+                self.process_dropped_image(bytes.to_vec());
             }
         }
     }
@@ -1699,6 +1765,40 @@ impl eframe::App for UscApp {
         });
 
         self.show_stems_modal(ctx);
+
+        if let Some(pending) = self.pending_image.take() {
+            let mut chosen_slot: Option<ImageSlot> = None;
+            let mut keep_open = true;
+            egui::Window::new("Dropped Image")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Dropped image is {}×{} (not square). Save as Cover or Background?",
+                        pending.width, pending.height
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save as Cover ([CO].jpg)").clicked() {
+                            chosen_slot = Some(ImageSlot::Cover);
+                            keep_open = false;
+                        }
+                        if ui.button("Save as Background ([BG].jpg)").clicked() {
+                            chosen_slot = Some(ImageSlot::Background);
+                            keep_open = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            keep_open = false;
+                        }
+                    });
+                });
+            if let Some(slot) = chosen_slot {
+                self.save_dropped_image(&pending.bytes, slot);
+            } else if keep_open {
+                self.pending_image = Some(pending);
+            }
+        }
 
         if let Some(modal) = self.finish_modal {
             egui::Window::new(match modal {

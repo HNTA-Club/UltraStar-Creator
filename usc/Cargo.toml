@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 arboard = "3"
 eframe = "0.33"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 libloading = "0.8"
 lindera = { version = "6.2", features = ["embed-ipadic"] }
 lofty = "0.22"

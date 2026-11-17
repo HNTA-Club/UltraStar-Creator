@@ -342,6 +342,18 @@ pub fn resolve_base_name(artist: &str, title: &str, fallback_stem: &str) -> Stri
     }
 }
 
+pub fn resolve_song_output_dir(output_dir: &Path, base_name: &str) -> PathBuf {
+    if output_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == base_name)
+    {
+        output_dir.to_path_buf()
+    } else {
+        output_dir.join(base_name)
+    }
+}
+
 pub fn derive_output_paths(output_dir: &Path, base_name: &str, has_video: bool) -> DerivedOutputs {
     DerivedOutputs {
         mp3: output_dir.join(format!("{base_name}.mp3")),
@@ -1069,8 +1081,9 @@ pub fn process_media(
         let is_video = has_video_stream(media_file);
 
         // Stage outputs in temp_dir first so cancelling mid-run leaves output_dir untouched
+        let song_dir = resolve_song_output_dir(&job.output_dir, base_name);
         let staged = derive_output_paths(&temp_dir, base_name, is_video);
-        let mut final_derived = derive_output_paths(&job.output_dir, base_name, is_video);
+        let mut final_derived = derive_output_paths(&song_dir, base_name, is_video);
         final_derived.artist = job.artist.trim().to_owned();
         final_derived.title = job.title.trim().to_owned();
 
@@ -1236,6 +1249,8 @@ pub fn process_media(
         })?;
 
         check_cancelled(&cancel)?;
+        fs::create_dir_all(&song_dir)
+            .map_err(|e| format!("Failed to create song output folder {}: {e}", song_dir.display()))?;
         move_or_copy(&staged.mp3, &final_derived.mp3)?;
         if let (Some(src_mp4), Some(dst_mp4)) = (&staged.muted_mp4, &final_derived.muted_mp4) {
             move_or_copy(src_mp4, dst_mp4)?;
@@ -1308,6 +1323,20 @@ mod tests {
         );
         assert_eq!(resolve_base_name("", "Only Title", "raw"), "Only Title");
         assert_eq!(resolve_base_name("", "", "yt [Official MV]"), "yt [Official MV]");
+    }
+
+    #[test]
+    fn resolve_song_output_dir_creates_subfolder_without_double_nesting() {
+        let base = Path::new("/music/output");
+        assert_eq!(
+            resolve_song_output_dir(base, "YOASOBI - Idol"),
+            Path::new("/music/output/YOASOBI - Idol")
+        );
+        let already = Path::new("/music/output/YOASOBI - Idol");
+        assert_eq!(
+            resolve_song_output_dir(already, "YOASOBI - Idol"),
+            Path::new("/music/output/YOASOBI - Idol")
+        );
     }
 
     #[test]
