@@ -4,6 +4,8 @@ pub mod tap;
 pub mod waveform;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
@@ -85,6 +87,7 @@ struct StemsModalState {
     preset: VideoPreset,
     device: ComputeDevice,
     running: bool,
+    cancel_flag: Arc<AtomicBool>,
     progress: f32,
     status_line: String,
     logs: Vec<String>,
@@ -105,6 +108,7 @@ impl Default for StemsModalState {
             preset: VideoPreset::Compact,
             device: ComputeDevice::Auto,
             running: false,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
             progress: 0.0,
             status_line: "Ready.".into(),
             logs: Vec::new(),
@@ -924,6 +928,8 @@ impl UscApp {
         if self.stems_modal.running {
             return;
         }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.stems_modal.cancel_flag = cancel.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.stems_modal.running = true;
         self.stems_modal.progress = 0.05;
@@ -933,7 +939,7 @@ impl UscApp {
 
         std::thread::spawn(move || {
             let tx_done = tx.clone();
-            let res = run_tools_setup(false, Some(tx));
+            let res = run_tools_setup(false, cancel, Some(tx));
             let _ = tx_done.send(StemsEvent::SetupFinished(res));
         });
     }
@@ -959,6 +965,8 @@ impl UscApp {
             preset: self.stems_modal.preset,
             device: self.stems_modal.device,
         };
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.stems_modal.cancel_flag = cancel.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.stems_modal.running = true;
         self.stems_modal.progress = 0.01;
@@ -968,9 +976,20 @@ impl UscApp {
 
         std::thread::spawn(move || {
             let tx_done = tx.clone();
-            let res = process_media(&job, Some(tx));
+            let res = process_media(&job, cancel, Some(tx));
             let _ = tx_done.send(StemsEvent::Finished(res));
         });
+    }
+
+    fn cancel_stems_processing(&mut self) {
+        if !self.stems_modal.running {
+            return;
+        }
+        self.stems_modal.cancel_flag.store(true, Ordering::Relaxed);
+        self.stems_modal.status_line = "Stopping…".into();
+        self.stems_modal
+            .logs
+            .push("Cancellation requested by user; stopping workers…".into());
     }
 
     fn poll_stems_worker(&mut self, ctx: &egui::Context) {
@@ -1041,6 +1060,7 @@ impl UscApp {
         }
         let mut open = self.stems_modal.open;
         let mut start_clicked = false;
+        let mut stop_clicked = false;
         let mut setup_clicked = false;
         let running = self.stems_modal.running;
         let ffmpeg_ok = get_ffmpeg_path().is_some();
@@ -1242,6 +1262,13 @@ impl UscApp {
                     {
                         start_clicked = true;
                     }
+                    if ui
+                        .add_enabled(running, egui::Button::new("Stop / Cancel"))
+                        .on_hover_text("Abort current download/encoding/separation and clean up temp files")
+                        .clicked()
+                    {
+                        stop_clicked = true;
+                    }
                     ui.label(&self.stems_modal.status_line);
                 });
 
@@ -1266,10 +1293,14 @@ impl UscApp {
                 }
             });
 
-        if !running {
-            self.stems_modal.open = open;
+        if !open && running {
+            stop_clicked = true;
         }
-        if setup_clicked {
+        self.stems_modal.open = open;
+
+        if stop_clicked {
+            self.cancel_stems_processing();
+        } else if setup_clicked {
             self.start_tools_setup();
         } else if start_clicked {
             self.start_stems_processing();

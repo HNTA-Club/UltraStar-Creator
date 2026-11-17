@@ -1,15 +1,25 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::time::SystemTime;
+use std::thread;
+use std::time::{Duration, SystemTime};
 
 use stem_splitter_core::{
-    SplitOptions, SplitProgress, set_download_progress_callback, set_split_progress_callback,
-    split_file,
+    SplitResult,
+    core::{
+        audio::{WavWriter, create_wav_writer, read_audio, sample_to_i16},
+        engine,
+    },
+    ensure_model, set_download_progress_callback,
 };
+
+pub const CANCELLED_MSG: &str = "Cancelled by user.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceMode {
@@ -112,6 +122,75 @@ pub fn configure_no_window(cmd: &mut Command) {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = cmd;
+    }
+}
+
+fn check_cancelled(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(CANCELLED_MSG.to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn run_command_cancellable(
+    cmd: &mut Command,
+    cancel: &AtomicBool,
+    step_label: &str,
+) -> Result<(), String> {
+    check_cancelled(cancel)?;
+    configure_no_window(cmd);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{step_label}: failed to spawn process: {e}"))?;
+
+    // Drain stderr in a helper thread so the child never blocks on a full pipe buffer
+    let mut stderr_pipe = child.stderr.take();
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(ref mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_handle.join();
+            return Err(CANCELLED_MSG.to_owned());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stderr = stderr_handle.join().unwrap_or_default();
+                if status.success() {
+                    return Ok(());
+                }
+                let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
+                let summary = tail.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                return Err(format!(
+                    "{step_label} failed: {}",
+                    if summary.is_empty() {
+                        "non-zero exit code"
+                    } else {
+                        &summary
+                    }
+                ));
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = stderr_handle.join();
+                return Err(format!("{step_label}: error waiting on process: {e}"));
+            }
+        }
     }
 }
 
@@ -266,10 +345,12 @@ pub fn build_ytdlp_args(
 pub fn download_url_media(
     url: &str,
     output_dir: &Path,
+    cancel: &AtomicBool,
     tx: &Option<Sender<StemsEvent>>,
 ) -> Result<PathBuf, String> {
+    check_cancelled(cancel)?;
     let ytdlp_exe = get_ytdlp_path().ok_or_else(|| {
-        "URL downloading requires yt-dlp, which was not found.\nClick 'Download / Setup Tools' to install portable FFmpeg & yt-dlp automatically.".to_owned()
+        "URL downloading requires yt-dlp, which was not found.\nClick 'Check / Download Tools' to install portable FFmpeg & yt-dlp automatically.".to_owned()
     })?;
 
     fs::create_dir_all(output_dir)
@@ -289,20 +370,8 @@ pub fn download_url_media(
     let ffmpeg_bin = get_ffmpeg_path();
     let args = build_ytdlp_args(ffmpeg_bin.as_deref(), url, output_dir);
     let mut cmd = Command::new(&ytdlp_exe);
-    configure_no_window(&mut cmd);
     cmd.args(&args);
-
-    let out = cmd
-        .output()
-        .map_err(|e| format!("Failed to launch yt-dlp: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let msg = stderr.trim();
-        return Err(format!(
-            "yt-dlp download failed: {}",
-            if msg.is_empty() { "unknown error" } else { msg }
-        ));
-    }
+    run_command_cancellable(&mut cmd, cancel, "yt-dlp download")?;
 
     let after_files: Vec<PathBuf> = fs::read_dir(output_dir)
         .ok()
@@ -365,14 +434,16 @@ pub fn download_url_media(
 pub fn resolve_input_media(
     source_input: &str,
     temp_dir: &Path,
+    cancel: &AtomicBool,
     tx: &Option<Sender<StemsEvent>>,
 ) -> Result<PathBuf, String> {
+    check_cancelled(cancel)?;
     let trimmed = source_input.trim();
     if trimmed.is_empty() {
         return Err("Source input is empty.".to_owned());
     }
     if is_url(trimmed) {
-        return download_url_media(trimmed, temp_dir, tx);
+        return download_url_media(trimmed, temp_dir, cancel, tx);
     }
     let path = PathBuf::from(trimmed);
     if path.is_file() {
@@ -464,20 +535,15 @@ pub fn build_ffmpeg_inst_mix_args(component_stems: &[&Path], output_mp3: &Path) 
     args
 }
 
-fn run_ffmpeg(ffmpeg_bin: &Path, args: &[String], step_label: &str) -> Result<(), String> {
+fn run_ffmpeg(
+    ffmpeg_bin: &Path,
+    args: &[String],
+    cancel: &AtomicBool,
+    step_label: &str,
+) -> Result<(), String> {
     let mut cmd = Command::new(ffmpeg_bin);
-    configure_no_window(&mut cmd);
     cmd.args(args);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("{step_label}: failed to execute ffmpeg: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
-        let summary = tail.into_iter().rev().collect::<Vec<_>>().join(" | ");
-        return Err(format!("{step_label} failed: {summary}"));
-    }
-    Ok(())
+    run_command_cancellable(&mut cmd, cancel, step_label)
 }
 
 fn send_log(tx: &Option<Sender<StemsEvent>>, msg: impl Into<String>) {
@@ -493,6 +559,192 @@ fn send_progress(tx: &Option<Sender<StemsEvent>>, fraction: f32, status: impl In
             status: status.into(),
         });
     }
+}
+
+fn fill_stereo_window(
+    samples: &[f32],
+    channels: u16,
+    start_frame: usize,
+    left_raw: &mut [f32],
+    right_raw: &mut [f32],
+) {
+    let ch = usize::from(channels.max(1));
+    for i in 0..left_raw.len() {
+        let frame = start_frame + i;
+        let base = frame * ch;
+        if base >= samples.len() {
+            left_raw[i] = 0.0;
+            right_raw[i] = 0.0;
+            continue;
+        }
+        let left = samples[base];
+        let right = if ch == 1 {
+            left
+        } else {
+            samples.get(base + 1).copied().unwrap_or(left)
+        };
+        left_raw[i] = left;
+        right_raw[i] = right;
+    }
+}
+
+fn split_file_cancellable(
+    input_path: &Path,
+    output_dir: &Path,
+    cancel: &AtomicBool,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<SplitResult, String> {
+    check_cancelled(cancel)?;
+    send_log(tx, "[HTDemucs] Resolving & verifying model…");
+    let handle =
+        ensure_model("htdemucs_ort_v1", None).map_err(|e| format!("Model resolve failed: {e}"))?;
+
+    check_cancelled(cancel)?;
+    send_log(tx, "[HTDemucs] Preloading ONNX Runtime session…");
+    engine::preload(&handle).map_err(|e| format!("Engine preload failed: {e}"))?;
+
+    let mf = engine::manifest();
+    if mf.sample_rate != 44100 {
+        return Err("Expected 44.1 kHz HTDemucs model".to_owned());
+    }
+
+    check_cancelled(cancel)?;
+    let audio =
+        read_audio(input_path).map_err(|e| format!("Failed to read extracted PCM WAV: {e}"))?;
+    let channels = usize::from(audio.channels.max(1));
+    let n = audio.samples.len() / channels;
+    if n == 0 {
+        return Err("Extracted audio is empty".to_owned());
+    }
+
+    let win = mf.window;
+    let hop = mf.hop;
+    if !(win > 0 && hop > 0 && hop <= win) {
+        return Err("Invalid window/hop in HTDemucs manifest".to_owned());
+    }
+
+    let names = if mf.stems.is_empty() {
+        vec![
+            "vocals".to_owned(),
+            "drums".to_owned(),
+            "bass".to_owned(),
+            "other".to_owned(),
+        ]
+    } else {
+        mf.stems.clone()
+    };
+
+    let stem_base = output_dir.join("raw_stem");
+    let vocals_out = format!("{}_vocals.wav", stem_base.to_string_lossy());
+    let drums_out = format!("{}_drums.wav", stem_base.to_string_lossy());
+    let bass_out = format!("{}_bass.wav", stem_base.to_string_lossy());
+    let other_out = format!("{}_other.wav", stem_base.to_string_lossy());
+
+    struct StemOut {
+        idx: usize,
+        writer: WavWriter,
+    }
+
+    let mut name_idx: HashMap<String, usize> = HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        name_idx.insert(name.to_ascii_lowercase(), i);
+    }
+
+    let mut left_raw = vec![0.0_f32; win];
+    let mut right_raw = vec![0.0_f32; win];
+    let mut stem_outputs: Vec<StemOut> = Vec::new();
+
+    let mut pos = 0usize;
+    let mut chunk_done = 0usize;
+    let total_chunks = if n <= hop { 1 } else { (n - 1) / hop + 1 };
+    let mut first_chunk = true;
+
+    while pos < n {
+        check_cancelled(cancel)?;
+        fill_stereo_window(
+            &audio.samples,
+            audio.channels,
+            pos,
+            &mut left_raw,
+            &mut right_raw,
+        );
+
+        let out = engine::run_window_demucs(&left_raw, &right_raw)
+            .map_err(|e| format!("HTDemucs inference failed: {e}"))?;
+        let (stems_count, _, t_out) = (out.shape()[0], out.shape()[1], out.shape()[2]);
+
+        if first_chunk {
+            let get_idx = |key: &str, fallback: usize| -> usize {
+                name_idx
+                    .get(key)
+                    .copied()
+                    .unwrap_or(fallback.min(stems_count.saturating_sub(1)))
+            };
+            stem_outputs = vec![
+                StemOut {
+                    idx: get_idx("vocals", 0),
+                    writer: create_wav_writer(&vocals_out, mf.sample_rate, 2)
+                        .map_err(|e| e.to_string())?,
+                },
+                StemOut {
+                    idx: get_idx("drums", 1),
+                    writer: create_wav_writer(&drums_out, mf.sample_rate, 2)
+                        .map_err(|e| e.to_string())?,
+                },
+                StemOut {
+                    idx: get_idx("bass", 2),
+                    writer: create_wav_writer(&bass_out, mf.sample_rate, 2)
+                        .map_err(|e| e.to_string())?,
+                },
+                StemOut {
+                    idx: get_idx("other", 3),
+                    writer: create_wav_writer(&other_out, mf.sample_rate, 2)
+                        .map_err(|e| e.to_string())?,
+                },
+            ];
+            first_chunk = false;
+        }
+
+        let copy_len = hop.min(t_out).min(n - pos);
+        for s_out in &mut stem_outputs {
+            for i in 0..copy_len {
+                s_out
+                    .writer
+                    .write_sample(sample_to_i16(out[(s_out.idx, 0, i)]))
+                    .map_err(|e| e.to_string())?;
+                s_out
+                    .writer
+                    .write_sample(sample_to_i16(out[(s_out.idx, 1, i)]))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        chunk_done += 1;
+        let pct = chunk_done as f32 / total_chunks as f32 * 100.0;
+        let frac = 0.25 + (pct / 100.0) * 0.55;
+        send_progress(
+            tx,
+            frac,
+            format!("Separating stems: chunk {chunk_done}/{total_chunks} ({pct:.0}%)"),
+        );
+
+        if pos + hop >= n {
+            break;
+        }
+        pos += hop;
+    }
+
+    check_cancelled(cancel)?;
+    for s_out in stem_outputs {
+        s_out.writer.finalize().map_err(|e| e.to_string())?;
+    }
+
+    Ok(SplitResult {
+        vocals_path: vocals_out,
+        drums_path: drums_out,
+        bass_path: bass_out,
+        other_path: other_out,
+    })
 }
 
 fn copy_found_binary_recursive(dir: &Path, file_name: &str, dest: &Path) -> bool {
@@ -524,8 +776,10 @@ fn copy_found_binary_recursive(dir: &Path, file_name: &str, dest: &Path) -> bool
 
 pub fn download_and_extract_ffmpeg(
     target_bin_dir: &Path,
+    cancel: &AtomicBool,
     tx: &Option<Sender<StemsEvent>>,
 ) -> Result<(), String> {
+    check_cancelled(cancel)?;
     fs::create_dir_all(target_bin_dir)
         .map_err(|e| format!("Failed to create bin dir {}: {e}", target_bin_dir.display()))?;
 
@@ -550,6 +804,7 @@ pub fn download_and_extract_ffmpeg(
     let bytes = resp
         .bytes()
         .map_err(|e| format!("Failed to read FFmpeg archive bytes: {e}"))?;
+    check_cancelled(cancel)?;
 
     let temp_extract = env::temp_dir().join(format!("usc_ffmpeg_setup_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_extract);
@@ -569,20 +824,13 @@ pub fn download_and_extract_ffmpeg(
     send_progress(tx, 0.50, "Extracting FFmpeg & FFprobe…");
 
     let mut cmd = Command::new("tar");
-    configure_no_window(&mut cmd);
     cmd.arg("-xf")
         .arg(&archive_path)
         .arg("-C")
         .arg(&temp_extract);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("Failed to invoke system tar to extract FFmpeg: {e}"))?;
-    if !out.status.success() {
+    if let Err(e) = run_command_cancellable(&mut cmd, cancel, "FFmpeg archive extraction") {
         let _ = fs::remove_dir_all(&temp_extract);
-        return Err(format!(
-            "Archive extraction failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        return Err(e);
     }
 
     let ffmpeg_name = binary_filename("ffmpeg");
@@ -615,8 +863,10 @@ pub fn download_and_extract_ffmpeg(
 
 pub fn download_ytdlp(
     target_bin_dir: &Path,
+    cancel: &AtomicBool,
     tx: &Option<Sender<StemsEvent>>,
 ) -> Result<(), String> {
+    check_cancelled(cancel)?;
     fs::create_dir_all(target_bin_dir)
         .map_err(|e| format!("Failed to create bin dir {}: {e}", target_bin_dir.display()))?;
 
@@ -640,6 +890,7 @@ pub fn download_ytdlp(
     let bytes = resp
         .bytes()
         .map_err(|e| format!("Failed to read yt-dlp binary bytes: {e}"))?;
+    check_cancelled(cancel)?;
     fs::write(&dest, &bytes)
         .map_err(|e| format!("Failed to write {}: {e}", dest.display()))?;
 
@@ -653,7 +904,11 @@ pub fn download_ytdlp(
     Ok(())
 }
 
-pub fn run_tools_setup(force: bool, tx: Option<Sender<StemsEvent>>) -> Result<(), String> {
+pub fn run_tools_setup(
+    force: bool,
+    cancel: Arc<AtomicBool>,
+    tx: Option<Sender<StemsEvent>>,
+) -> Result<(), String> {
     let ffmpeg_found = get_ffmpeg_path();
     let ffprobe_found = get_ffprobe_path();
     let ytdlp_found = get_ytdlp_path();
@@ -702,10 +957,10 @@ pub fn run_tools_setup(force: bool, tx: Option<Sender<StemsEvent>>) -> Result<()
 
     let bin_dir = local_bin_dir();
     if need_ffmpeg {
-        download_and_extract_ffmpeg(&bin_dir, &tx)?;
+        download_and_extract_ffmpeg(&bin_dir, &cancel, &tx)?;
     }
     if need_ytdlp {
-        download_ytdlp(&bin_dir, &tx)?;
+        download_ytdlp(&bin_dir, &cancel, &tx)?;
     }
 
     send_progress(&tx, 1.0, "Tools setup complete! FFmpeg & yt-dlp are ready.");
@@ -737,9 +992,22 @@ fn configure_device_env(device: ComputeDevice) {
     }
 }
 
-pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<DerivedOutputs, String> {
+fn move_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
+    if fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    fs::copy(src, dst)
+        .map(|_| ())
+        .map_err(|e| format!("Failed to write {}: {e}", dst.display()))
+}
+
+pub fn process_media(
+    job: &StemsJob,
+    cancel: Arc<AtomicBool>,
+    tx: Option<Sender<StemsEvent>>,
+) -> Result<DerivedOutputs, String> {
     let ffmpeg_bin = get_ffmpeg_path().ok_or_else(|| {
-        "FFmpeg was not found on your system (checked ./bin and PATH). Click 'Download / Setup Tools' to install FFmpeg & yt-dlp automatically.".to_owned()
+        "FFmpeg was not found on your system (checked ./bin and PATH). Click 'Check / Download Tools' to install FFmpeg & yt-dlp automatically.".to_owned()
     })?;
 
     fs::create_dir_all(&job.output_dir)
@@ -751,7 +1019,7 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
 
     let result = (|| -> Result<DerivedOutputs, String> {
         send_progress(&tx, 0.02, "Preparing media pipeline…");
-        let media_file_buf = resolve_input_media(&job.source_input, &temp_dir, &tx)?;
+        let media_file_buf = resolve_input_media(&job.source_input, &temp_dir, &cancel, &tx)?;
         let media_file = media_file_buf.as_path();
 
         let base_name = media_file
@@ -759,7 +1027,10 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
             .and_then(|s| s.to_str())
             .unwrap_or("song");
         let is_video = has_video_stream(media_file);
-        let derived = derive_output_paths(&job.output_dir, base_name, is_video);
+
+        // Stage outputs in temp_dir first so cancelling mid-run leaves output_dir untouched
+        let staged = derive_output_paths(&temp_dir, base_name, is_video);
+        let final_derived = derive_output_paths(&job.output_dir, base_name, is_video);
 
         send_log(
             &tx,
@@ -773,14 +1044,15 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
             ),
         );
 
-        std::thread::scope(|s| -> Result<DerivedOutputs, String> {
+        std::thread::scope(|s| -> Result<(), String> {
             let tx_vid = tx.clone();
             let ffmpeg_vid = ffmpeg_bin.clone();
-            let derived_mp4 = derived.muted_mp4.clone();
+            let staged_mp4 = staged.muted_mp4.clone();
             let preset = job.preset;
+            let cancel_vid = cancel.clone();
 
             let vid_handle = s.spawn(move || -> Result<(), String> {
-                let Some(out_mp4) = derived_mp4 else {
+                let Some(out_mp4) = staged_mp4 else {
                     send_log(&tx_vid, "[Video] Audio-only input; skipping muted video.");
                     return Ok(());
                 };
@@ -793,7 +1065,7 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
                     ),
                 );
                 let args = build_ffmpeg_muted_video_args(media_file, &out_mp4, preset);
-                run_ffmpeg(&ffmpeg_vid, &args, "Muted video encoding")?;
+                run_ffmpeg(&ffmpeg_vid, &args, &cancel_vid, "Muted video encoding")?;
                 send_log(
                     &tx_vid,
                     format!(
@@ -806,27 +1078,28 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
 
             let tx_aud = tx.clone();
             let ffmpeg_aud = ffmpeg_bin.clone();
-            let derived_aud = derived.clone();
+            let staged_aud = staged.clone();
             let temp_aud = temp_dir.clone();
             let device = job.device;
+            let cancel_aud = cancel.clone();
 
             let aud_handle = s.spawn(move || -> Result<(), String> {
                 send_log(
                     &tx_aud,
                     format!(
                         "[Audio] Encoding master MP3 (-q:a 0): {}",
-                        derived_aud.mp3.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                        staged_aud.mp3.file_name().and_then(|n| n.to_str()).unwrap_or("")
                     ),
                 );
                 send_progress(&tx_aud, 0.05, "Encoding master MP3…");
-                let mp3_args = build_ffmpeg_mp3_args(media_file, &derived_aud.mp3);
-                run_ffmpeg(&ffmpeg_aud, &mp3_args, "Master MP3 encoding")?;
+                let mp3_args = build_ffmpeg_mp3_args(media_file, &staged_aud.mp3);
+                run_ffmpeg(&ffmpeg_aud, &mp3_args, &cancel_aud, "Master MP3 encoding")?;
 
                 let pcm_wav = temp_aud.join(format!("{base_name}_pcm44k.wav"));
                 send_log(&tx_aud, "[Audio] Extracting 44.1 kHz stereo PCM for HTDemucs…");
                 send_progress(&tx_aud, 0.10, "Extracting 44.1 kHz stereo PCM…");
                 let wav_args = build_ffmpeg_pcm_wav_args(media_file, &pcm_wav);
-                run_ffmpeg(&ffmpeg_aud, &wav_args, "PCM WAV extraction")?;
+                run_ffmpeg(&ffmpeg_aud, &wav_args, &cancel_aud, "PCM WAV extraction")?;
 
                 configure_device_env(device);
 
@@ -846,40 +1119,6 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
                     }
                 });
 
-                let tx_sp = tx_aud.clone();
-                set_split_progress_callback(move |prog| match prog {
-                    SplitProgress::Stage(stage) => {
-                        send_log(&tx_sp, format!("[HTDemucs] Stage: {stage}"));
-                    }
-                    SplitProgress::Chunks {
-                        done,
-                        total,
-                        percent,
-                    } => {
-                        let frac = 0.25 + (percent / 100.0) * 0.55;
-                        send_progress(
-                            &tx_sp,
-                            frac,
-                            format!("Separating stems: chunk {done}/{total} ({percent:.0}%)"),
-                        );
-                    }
-                    SplitProgress::Writing {
-                        stem,
-                        done,
-                        total,
-                        ..
-                    } => {
-                        send_progress(
-                            &tx_sp,
-                            0.80 + (done as f32 / total.max(1) as f32) * 0.08,
-                            format!("Writing raw stem: {stem} ({done}/{total})"),
-                        );
-                    }
-                    SplitProgress::Finished => {
-                        send_log(&tx_sp, "[HTDemucs] Raw stem separation finished.");
-                    }
-                });
-
                 let stems_dir = temp_aud.join("stems");
                 fs::create_dir_all(&stems_dir)
                     .map_err(|e| format!("Failed to create stems dir: {e}"))?;
@@ -891,13 +1130,8 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
                         device.label()
                     ),
                 );
-                let split_opts = SplitOptions {
-                    output_dir: stems_dir.to_string_lossy().into_owned(),
-                    model_name: "htdemucs_ort_v1".to_owned(),
-                    manifest_url_override: None,
-                };
-                let split_res = split_file(&pcm_wav.to_string_lossy(), split_opts)
-                    .map_err(|e| format!("HTDemucs separation failed: {e}"))?;
+                let split_res =
+                    split_file_cancellable(&pcm_wav, &stems_dir, &cancel_aud, &tx_aud)?;
 
                 send_progress(&tx_aud, 0.90, "Encoding Vocals & Instrumental MP3s…");
                 send_log(
@@ -910,25 +1144,30 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
                 let bass_wav = Path::new(&split_res.bass_path);
                 let other_wav = Path::new(&split_res.other_path);
 
-                let voc_args = build_ffmpeg_mp3_args(vocals_wav, &derived_aud.vocals);
-                run_ffmpeg(&ffmpeg_aud, &voc_args, "Vocals MP3 encoding")?;
+                let voc_args = build_ffmpeg_mp3_args(vocals_wav, &staged_aud.vocals);
+                run_ffmpeg(&ffmpeg_aud, &voc_args, &cancel_aud, "Vocals MP3 encoding")?;
 
                 let inst_args = build_ffmpeg_inst_mix_args(
                     &[drums_wav, bass_wav, other_wav],
-                    &derived_aud.instrumental,
+                    &staged_aud.instrumental,
                 );
-                run_ffmpeg(&ffmpeg_aud, &inst_args, "Instrumental mix & MP3 encoding")?;
+                run_ffmpeg(
+                    &ffmpeg_aud,
+                    &inst_args,
+                    &cancel_aud,
+                    "Instrumental mix & MP3 encoding",
+                )?;
 
                 send_log(
                     &tx_aud,
                     format!(
                         "[Audio] Stems ready: {}, {}",
-                        derived_aud
+                        staged_aud
                             .vocals
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(""),
-                        derived_aud
+                        staged_aud
                             .instrumental
                             .file_name()
                             .and_then(|n| n.to_str())
@@ -938,20 +1177,33 @@ pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<D
                 Ok(())
             });
 
-            let vid_res = vid_handle
-                .join()
-                .map_err(|_| "Video worker thread panicked".to_owned())?;
             let aud_res = aud_handle
                 .join()
                 .map_err(|_| "Audio worker thread panicked".to_owned())?;
+            if aud_res.is_err() {
+                // Signal the video worker to abort immediately too if audio failed/cancelled
+                cancel.store(true, Ordering::Relaxed);
+            }
+            let vid_res = vid_handle
+                .join()
+                .map_err(|_| "Video worker thread panicked".to_owned())?;
 
-            vid_res?;
             aud_res?;
+            vid_res?;
+            Ok(())
+        })?;
 
-            send_progress(&tx, 1.0, "Media & stem preparation complete!");
-            send_log(&tx, "Media & stem preparation complete!");
-            Ok(derived)
-        })
+        check_cancelled(&cancel)?;
+        move_or_copy(&staged.mp3, &final_derived.mp3)?;
+        if let (Some(src_mp4), Some(dst_mp4)) = (&staged.muted_mp4, &final_derived.muted_mp4) {
+            move_or_copy(src_mp4, dst_mp4)?;
+        }
+        move_or_copy(&staged.vocals, &final_derived.vocals)?;
+        move_or_copy(&staged.instrumental, &final_derived.instrumental)?;
+
+        send_progress(&tx, 1.0, "Media & stem preparation complete!");
+        send_log(&tx, "Media & stem preparation complete!");
+        Ok(final_derived)
     })();
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -1000,6 +1252,12 @@ mod tests {
         assert!(args.contains(&"mp4".to_owned()));
         assert!(args.windows(2).any(|w| w == ["--ffmpeg-location", "/opt/usc/bin"]));
         assert_eq!(args.last().map(String::as_str), Some("https://youtu.be/abc"));
+    }
+
+    #[test]
+    fn cancel_flag_aborts_immediately() {
+        let flag = AtomicBool::new(true);
+        assert_eq!(check_cancelled(&flag), Err(CANCELLED_MSG.to_owned()));
     }
 
     #[test]
