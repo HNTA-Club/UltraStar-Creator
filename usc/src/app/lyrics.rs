@@ -300,7 +300,6 @@ fn show_teleprompter(
     let (lines, active_line) = session.queued_lines();
     let syls = session.syllables();
     let current_syl = session.current();
-    let next_syl = session.next_syllable();
     let is_pressed = session.is_pressed();
     let dark = ui.visuals().dark_mode;
     let prompter_px = (*font_size + 7.0).clamp(16.0, 32.0);
@@ -369,7 +368,6 @@ fn show_teleprompter(
                     syls,
                     is_current_row,
                     current_syl,
-                    next_syl,
                     is_pressed,
                     is_duet,
                     row_role,
@@ -390,7 +388,6 @@ fn build_teleprompter_row_job(
     syls: &[crate::lyrics::Syllable],
     is_current_row: bool,
     current_syl: Option<usize>,
-    next_syl: Option<usize>,
     is_pressed: bool,
     is_duet: bool,
     row_role: Role,
@@ -402,9 +399,14 @@ fn build_teleprompter_row_job(
     job.wrap.max_width = wrap_width;
 
     let muted_fg = if dark {
-        egui::Color32::from_rgb(125, 138, 158)
+        egui::Color32::from_rgb(135, 148, 168)
     } else {
-        egui::Color32::from_rgb(130, 142, 160)
+        egui::Color32::from_rgb(120, 132, 150)
+    };
+    let bullet_fg = if dark {
+        egui::Color32::from_rgb(95, 108, 128)
+    } else {
+        egui::Color32::from_rgb(160, 172, 188)
     };
     let active_row_fg = if dark {
         egui::Color32::from_rgb(248, 250, 252)
@@ -432,13 +434,10 @@ fn build_teleprompter_row_job(
         });
     }
 
-    for &syl_idx in indices {
+    for (row_pos, &syl_idx) in indices.iter().enumerate() {
         let Some(syl) = syls.get(syl_idx) else {
             continue;
         };
-        let start = job.text.len();
-        job.text.push_str(&syl.text);
-        let end = job.text.len();
 
         let (color, background) = if !is_current_row {
             (muted_fg, egui::Color32::TRANSPARENT)
@@ -449,29 +448,57 @@ fn build_teleprompter_row_job(
                 egui::Color32::from_rgb(37, 99, 235)
             };
             (egui::Color32::WHITE, bg)
-        } else if Some(syl_idx) == next_syl {
-            let bg = if dark {
-                egui::Color32::from_rgba_unmultiplied(59, 130, 246, 75)
-            } else {
-                egui::Color32::from_rgba_unmultiplied(147, 197, 253, 160)
-            };
-            (active_row_fg, bg)
         } else if current_syl.is_some_and(|cur| syl_idx < cur) {
             (muted_fg, egui::Color32::TRANSPARENT)
         } else {
             (active_row_fg, egui::Color32::TRANSPARENT)
         };
 
-        job.sections.push(LayoutSection {
-            leading_space: 0.0,
-            byte_range: start..end,
-            format: TextFormat {
-                font_id: font_id.clone(),
-                color,
-                background,
-                ..Default::default()
-            },
-        });
+        let trimmed = syl.text.trim_end_matches(' ');
+        let trailing_spaces = &syl.text[trimmed.len()..];
+
+        if !trimmed.is_empty() {
+            let start = job.text.len();
+            job.text.push_str(trimmed);
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: start..job.text.len(),
+                format: TextFormat {
+                    font_id: font_id.clone(),
+                    color,
+                    background,
+                    ..Default::default()
+                },
+            });
+        }
+
+        if !trailing_spaces.is_empty() {
+            let start = job.text.len();
+            job.text.push_str(trailing_spaces);
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: start..job.text.len(),
+                format: TextFormat {
+                    font_id: font_id.clone(),
+                    color: if is_current_row { active_row_fg } else { muted_fg },
+                    background: egui::Color32::TRANSPARENT,
+                    ..Default::default()
+                },
+            });
+        } else if row_pos + 1 < indices.len() && !trimmed.ends_with('-') {
+            let start = job.text.len();
+            job.text.push('•');
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: start..job.text.len(),
+                format: TextFormat {
+                    font_id: font_id.clone(),
+                    color: bullet_fg,
+                    background: egui::Color32::TRANSPARENT,
+                    ..Default::default()
+                },
+            });
+        }
     }
 
     job
@@ -586,5 +613,27 @@ mod tests {
 
         let (out4, _) = toggle_role_on_lines("Été\nGröße", (1, 6), Role::Both);
         assert_eq!(out4, "[Both] Été\n[Both] Größe");
+    }
+
+    #[test]
+    fn teleprompter_renders_dimmed_bullets_for_plus_and_bullet_splits() {
+        let syls = crate::lyrics::syllables("The ma+gi+cal po•tion", false);
+        let indices: Vec<usize> = (0..syls.len()).collect();
+        let job = build_teleprompter_row_job(
+            &indices,
+            &syls,
+            true,
+            Some(0),
+            false,
+            false,
+            Role::Solo,
+            true,
+            egui::FontId::proportional(20.0),
+            500.0,
+        );
+        assert_eq!(job.text, "The ma•gi•cal po•tion");
+        // Section 0 is "The" (highlighted), Section 1 is " " (transparent background)
+        assert_ne!(job.sections[0].format.background, egui::Color32::TRANSPARENT);
+        assert_eq!(job.sections[1].format.background, egui::Color32::TRANSPARENT);
     }
 }
