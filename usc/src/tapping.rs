@@ -141,6 +141,14 @@ impl Session {
     pub fn syllables(&self) -> &[Syllable] {
         &self.syllables
     }
+
+    pub fn progress(&self) -> (usize, usize) {
+        (self.pos, self.queue.len())
+    }
+
+    pub fn remaining_queue(&self) -> &[usize] {
+        &self.queue[self.pos..]
+    }
 }
 
 #[cfg(test)]
@@ -281,5 +289,22 @@ mod tests {
         assert_eq!(s.undo_row(), 1000.0);
         assert_eq!(s.current(), Some(2));
         assert_eq!(s.notes().len(), 1);
+    }
+
+    #[test]
+    fn progress_and_remaining_queue() {
+        let mut s = Session::new(solo(&[3]), Filter::All, vec![]);
+        assert_eq!(s.progress(), (0, 3));
+        assert_eq!(s.remaining_queue(), &[0, 1, 2]);
+        s.press(100.0);
+        s.release(200.0);
+        assert_eq!(s.progress(), (1, 3));
+        assert_eq!(s.remaining_queue(), &[1, 2]);
+        s.press(300.0);
+        s.release(400.0);
+        s.press(500.0);
+        s.release(600.0);
+        assert_eq!(s.progress(), (3, 3));
+        assert!(s.remaining_queue().is_empty());
     }
 }
