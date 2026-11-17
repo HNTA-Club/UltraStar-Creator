@@ -84,6 +84,8 @@ struct StemsModalState {
     file_path: String,
     url_input: String,
     output_dir: PathBuf,
+    artist: String,
+    title: String,
     preset: VideoPreset,
     device: ComputeDevice,
     running: bool,
@@ -105,6 +107,8 @@ impl Default for StemsModalState {
             file_path: String::new(),
             url_input: String::new(),
             output_dir: default_out,
+            artist: String::new(),
+            title: String::new(),
             preset: VideoPreset::Compact,
             device: ComputeDevice::Auto,
             running: false,
@@ -962,6 +966,8 @@ impl UscApp {
         let job = StemsJob {
             source_input,
             output_dir: self.stems_modal.output_dir.clone(),
+            artist: self.stems_modal.artist.clone(),
+            title: self.stems_modal.title.clone(),
             preset: self.stems_modal.preset,
             device: self.stems_modal.device,
         };
@@ -1042,6 +1048,13 @@ impl UscApp {
                         "Complete! Loaded separated stems & muted video into project.".into();
                     self.stems_modal.open = false;
                     self.load_audio(derived.mp3);
+                    if !derived.artist.is_empty() {
+                        self.header.artist = derived.artist;
+                    }
+                    if !derived.title.is_empty() {
+                        self.header.title = derived.title;
+                    }
+                    self.refresh_output();
                     self.status =
                         "Media & stems prepared! Toggle [Mix | Vocals | Inst] in the right pane while tapping."
                             .into();
@@ -1164,6 +1177,24 @@ impl UscApp {
                                     self.stems_modal.output_dir = folder;
                                 }
                             }
+                            ui.end_row();
+
+                            ui.label("Artist:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.stems_modal.artist)
+                                    .hint_text("Optional (saves as <Artist> - <Title>)")
+                                    .desired_width(340.0),
+                            );
+                            ui.label("");
+                            ui.end_row();
+
+                            ui.label("Title:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.stems_modal.title)
+                                    .hint_text("Optional (fills Song Header on completion)")
+                                    .desired_width(340.0),
+                            );
+                            ui.label("");
                             ui.end_row();
 
                             ui.label("Video Preset:");

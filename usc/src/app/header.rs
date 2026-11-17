@@ -242,7 +242,12 @@ pub fn show(
                         actions.changed |= text_row(ui, "Creator:", &mut header.creator);
 
                         ui.label("MP3:");
-                        ui.add(egui::TextEdit::singleline(&mut header.mp3).interactive(false));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut header.mp3)
+                                .desired_width(160.0)
+                                .interactive(false),
+                        )
+                        .on_hover_text(&header.mp3);
                         ui.end_row();
 
                         actions.changed |=
@@ -301,6 +306,7 @@ fn combo_preset_row(
     egui::ComboBox::from_id_salt(label)
         .selected_text(display)
         .width(160.0)
+        .truncate()
         .show_ui(ui, |ui| {
             if !value.is_empty() && !presets.contains(&value.as_str()) {
                 let custom = value.clone();
@@ -330,9 +336,10 @@ fn media_combo_row(
     } else {
         value.as_str()
     };
-    egui::ComboBox::from_id_salt(label)
+    let resp = egui::ComboBox::from_id_salt(label)
         .selected_text(display)
         .width(160.0)
+        .truncate()
         .show_ui(ui, |ui| {
             if ui.selectable_value(value, String::new(), "(none)").changed() {
                 changed = true;
@@ -342,7 +349,11 @@ fn media_combo_row(
                     changed = true;
                 }
             }
-        });
+        })
+        .response;
+    if !value.is_empty() {
+        resp.on_hover_text(value.as_str());
+    }
     ui.end_row();
     changed
 }

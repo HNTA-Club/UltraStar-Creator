@@ -95,12 +95,16 @@ pub struct DerivedOutputs {
     pub muted_mp4: Option<PathBuf>,
     pub vocals: PathBuf,
     pub instrumental: PathBuf,
+    pub artist: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct StemsJob {
     pub source_input: String,
     pub output_dir: PathBuf,
+    pub artist: String,
+    pub title: String,
     pub preset: VideoPreset,
     pub device: ComputeDevice,
 }
@@ -306,12 +310,46 @@ pub fn has_video_stream(media_path: &Path) -> bool {
     is_video_extension(media_path).unwrap_or(true)
 }
 
+pub fn sanitize_filename_part(s: &str) -> String {
+    let cleaned: String = s
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ if c.is_control() => ' ',
+            _ => c,
+        })
+        .collect();
+    cleaned.trim_matches(|c: char| c == ' ' || c == '.').to_owned()
+}
+
+pub fn resolve_base_name(artist: &str, title: &str, fallback_stem: &str) -> String {
+    let a = sanitize_filename_part(artist);
+    let t = sanitize_filename_part(title);
+    let base = match (a.is_empty(), t.is_empty()) {
+        (false, false) => format!("{a} - {t}"),
+        (true, false) => t,
+        (false, true) => {
+            let fb = sanitize_filename_part(fallback_stem);
+            if fb.is_empty() { a } else { format!("{a} - {fb}") }
+        }
+        (true, true) => sanitize_filename_part(fallback_stem),
+    };
+    if base.is_empty() {
+        "song".to_owned()
+    } else {
+        base
+    }
+}
+
 pub fn derive_output_paths(output_dir: &Path, base_name: &str, has_video: bool) -> DerivedOutputs {
     DerivedOutputs {
         mp3: output_dir.join(format!("{base_name}.mp3")),
         muted_mp4: has_video.then(|| output_dir.join(format!("{base_name}_muted.mp4"))),
         vocals: output_dir.join(format!("{base_name} [Vocals].mp3")),
         instrumental: output_dir.join(format!("{base_name} [Instrumental].mp3")),
+        artist: String::new(),
+        title: String::new(),
     }
 }
 
@@ -1022,15 +1060,19 @@ pub fn process_media(
         let media_file_buf = resolve_input_media(&job.source_input, &temp_dir, &cancel, &tx)?;
         let media_file = media_file_buf.as_path();
 
-        let base_name = media_file
+        let fallback_stem = media_file
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("song");
+        let base_name_buf = resolve_base_name(&job.artist, &job.title, fallback_stem);
+        let base_name = base_name_buf.as_str();
         let is_video = has_video_stream(media_file);
 
         // Stage outputs in temp_dir first so cancelling mid-run leaves output_dir untouched
         let staged = derive_output_paths(&temp_dir, base_name, is_video);
-        let final_derived = derive_output_paths(&job.output_dir, base_name, is_video);
+        let mut final_derived = derive_output_paths(&job.output_dir, base_name, is_video);
+        final_derived.artist = job.artist.trim().to_owned();
+        final_derived.title = job.title.trim().to_owned();
 
         send_log(
             &tx,
@@ -1252,6 +1294,20 @@ mod tests {
         assert!(args.contains(&"mp4".to_owned()));
         assert!(args.windows(2).any(|w| w == ["--ffmpeg-location", "/opt/usc/bin"]));
         assert_eq!(args.last().map(String::as_str), Some("https://youtu.be/abc"));
+    }
+
+    #[test]
+    fn resolve_base_name_uses_artist_and_title_and_sanitizes() {
+        assert_eq!(
+            resolve_base_name("YOASOBI", "Idol", "yt_12345"),
+            "YOASOBI - Idol"
+        );
+        assert_eq!(
+            resolve_base_name("A/B", "Song: *Test*?", "raw"),
+            "A_B - Song_ _Test__"
+        );
+        assert_eq!(resolve_base_name("", "Only Title", "raw"), "Only Title");
+        assert_eq!(resolve_base_name("", "", "yt [Official MV]"), "yt [Official MV]");
     }
 
     #[test]
