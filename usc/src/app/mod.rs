@@ -85,6 +85,7 @@ pub struct UscApp {
     theme: ThemeMode,
     default_dir: Option<PathBuf>,
     mouse_tapping: bool,
+    clear_focus: bool,
     status: String,
     error_banner: Option<String>,
     finish_modal: Option<FinishModal>,
@@ -149,6 +150,7 @@ impl UscApp {
             theme,
             default_dir,
             mouse_tapping: false,
+            clear_focus: false,
             status: "Open or drop an audio file to begin.".into(),
             error_banner,
             finish_modal: None,
@@ -275,6 +277,15 @@ impl UscApp {
         self.status = "Media folder refreshed.".into();
     }
 
+    fn invalidate_session(&mut self) {
+        self.session = None;
+        self.kept_notes.clear();
+        if self.state == PlaybackState::Stopped {
+            self.state = PlaybackState::Initialized;
+        }
+        self.refresh_output();
+    }
+
     fn handle_new_lyrics(&mut self, raw: String) {
         if let Some(lang) = detect_language(&raw) {
             self.header.language = lang.to_string();
@@ -282,7 +293,7 @@ impl UscApp {
         let cleaned = clean(&raw);
         self.lyrics_text = cleaned;
         self.syllabify_current();
-        self.refresh_output();
+        self.invalidate_session();
     }
 
     fn syllabify_current(&mut self) {
@@ -302,6 +313,7 @@ impl UscApp {
         match std::fs::read_to_string(&dict_path) {
             Ok(dict) => {
                 self.lyrics_text = syllabify(&self.lyrics_text, &dict);
+                self.invalidate_session();
                 self.status = format!("Syllabified using {}.txt.", self.header.language.trim());
             }
             Err(_) => {
@@ -352,6 +364,7 @@ impl UscApp {
                 self.session = Some(session);
                 self.preview_state = PreviewState::Stopped;
                 self.state = PlaybackState::Playing;
+                self.clear_focus = true;
                 self.finish_modal = None;
                 self.refresh_output();
                 self.status = "Tapping: hold Space or V for each syllable.".into();
@@ -372,6 +385,7 @@ impl UscApp {
                     return;
                 }
                 self.state = PlaybackState::Playing;
+                self.clear_focus = true;
                 self.status = "Tapping resumed.".into();
             }
             PlaybackState::NoSong | PlaybackState::Stopped => {}
@@ -568,6 +582,9 @@ impl UscApp {
         if self.audio_path.is_none() {
             return;
         }
+        if self.state == PlaybackState::Playing {
+            self.toggle_play_pause();
+        }
         self.refresh_output();
         let artist = if self.header.artist.trim().is_empty() {
             "Unknown Artist"
@@ -602,7 +619,7 @@ impl UscApp {
         self.lyrics_text = updated;
         self.lyrics_cursor = sel;
         self.pending_cursor = Some(sel);
-        self.refresh_output();
+        self.invalidate_session();
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -770,6 +787,13 @@ impl eframe::App for UscApp {
             }
         }
 
+        if self.clear_focus {
+            self.clear_focus = false;
+            if let Some(focused) = ctx.memory(|m| m.focused()) {
+                ctx.memory_mut(|m| m.surrender_focus(focused));
+            }
+        }
+
         self.handle_dropped_files(ctx);
         self.handle_shortcuts(ctx);
 
@@ -888,6 +912,7 @@ impl eframe::App for UscApp {
             .default_width(290.0)
             .min_width(240.0)
             .show(ctx, |ui| {
+                let prev_duet = self.is_duet;
                 let act = header::show(
                     ui,
                     &mut self.header,
@@ -904,7 +929,9 @@ impl eframe::App for UscApp {
                 if act.refresh_media {
                     self.refresh_media();
                 }
-                if act.changed {
+                if self.is_duet != prev_duet {
+                    self.invalidate_session();
+                } else if act.changed {
                     self.refresh_output();
                 }
             });
@@ -954,6 +981,11 @@ impl eframe::App for UscApp {
                     if self.state == PlaybackState::Stopped {
                         self.state = PlaybackState::Initialized;
                     }
+                    let syls = syllables(&clean(&self.lyrics_text), self.is_duet);
+                    if !syls.is_empty() {
+                        self.session = Some(Session::new(syls, new_filter, self.kept_notes.clone()));
+                    }
+                    self.refresh_output();
                 }
                 if act.tap_press {
                     self.on_tap_press();
@@ -1010,6 +1042,8 @@ impl eframe::App for UscApp {
             }
             if let Some(role) = act.assign_role {
                 self.apply_role_assignment(role);
+            } else if act.text_changed {
+                self.invalidate_session();
             }
         });
 
@@ -1033,6 +1067,7 @@ impl eframe::App for UscApp {
                             self.finish_modal = None;
                         }
                         if ui.button("Save UltraStar File").clicked() {
+                            self.state = PlaybackState::Initialized;
                             self.finish_modal = None;
                             self.save_output_dialog();
                         }
@@ -1047,6 +1082,7 @@ impl eframe::App for UscApp {
                             self.reset_tapping();
                         }
                         if ui.button("Save UltraStar File").clicked() {
+                            self.state = PlaybackState::Initialized;
                             self.finish_modal = None;
                             self.save_output_dialog();
                         }

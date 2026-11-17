@@ -239,6 +239,7 @@ pub fn show(
             ui.add(
                 egui::TextEdit::multiline(&mut readonly_buf)
                     .font(egui::FontId::monospace(*output_font_size))
+                    .interactive(state != PlaybackState::Playing)
                     .desired_width(f32::INFINITY)
                     .min_size(egui::vec2(avail.x, (avail.y - 8.0).max(160.0))),
             );
