@@ -318,7 +318,7 @@ impl UscApp {
             return;
         };
         match self.state {
-            PlaybackState::Initialized | PlaybackState::Stopped => {
+            PlaybackState::Initialized => {
                 let cleaned = clean(&self.lyrics_text);
                 if cleaned.is_empty() {
                     self.status = "Enter song lyrics before tapping.".into();
@@ -374,7 +374,7 @@ impl UscApp {
                 self.state = PlaybackState::Playing;
                 self.status = "Tapping resumed.".into();
             }
-            PlaybackState::NoSong => {}
+            PlaybackState::NoSong | PlaybackState::Stopped => {}
         }
     }
 
@@ -1057,6 +1057,13 @@ impl eframe::App for UscApp {
     }
 }
 
+pub fn is_play_enabled(state: PlaybackState) -> bool {
+    matches!(
+        state,
+        PlaybackState::Initialized | PlaybackState::Playing | PlaybackState::Paused
+    )
+}
+
 pub fn format_time(seconds: f64) -> String {
     if !seconds.is_finite() || seconds <= 0.0 {
         return "0:00".into();
@@ -1093,5 +1100,14 @@ mod tests {
             sanitize_filename("A/B: C*D? \"E\"<F>|G\\H.txt"),
             "A_B_ C_D_ _E__F__G_H.txt"
         );
+    }
+
+    #[test]
+    fn play_disabled_when_stopped() {
+        assert!(!is_play_enabled(PlaybackState::NoSong));
+        assert!(!is_play_enabled(PlaybackState::Stopped));
+        assert!(is_play_enabled(PlaybackState::Initialized));
+        assert!(is_play_enabled(PlaybackState::Playing));
+        assert!(is_play_enabled(PlaybackState::Paused));
     }
 }

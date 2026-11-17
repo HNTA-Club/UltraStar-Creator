@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::lyrics::{role_accent, role_tint};
-use crate::app::{PlaybackState, format_time};
+use crate::app::{PlaybackState, format_time, is_play_enabled};
 use crate::lyrics::{Role, Syllable};
 use crate::tapping::{Filter, Session};
 
@@ -52,12 +52,7 @@ pub fn show(
     ui.heading("Tapping & UltraStar File");
     ui.add_space(4.0);
 
-    let play_enabled = bass_ok
-        && has_audio
-        && matches!(
-            state,
-            PlaybackState::Initialized | PlaybackState::Playing | PlaybackState::Paused
-        );
+    let play_enabled = bass_ok && has_audio && is_play_enabled(state);
     let is_active = matches!(state, PlaybackState::Playing | PlaybackState::Paused);
     let can_reset = has_audio
         && matches!(
