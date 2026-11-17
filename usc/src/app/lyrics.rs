@@ -1,7 +1,9 @@
 use eframe::egui;
 use egui::text::{LayoutJob, LayoutSection, TextFormat};
 
+use crate::app::waveform::{self, WaveformConfig};
 use crate::app::{PreviewState, format_time};
+use crate::audio::WaveformPeaks;
 use crate::lyrics::Role;
 use crate::romaji::{HatsuonMode, LongVowelMode, RomajiConfig};
 use crate::tapping::Session;
@@ -149,11 +151,21 @@ pub fn show(
     duration_s: f64,
     active_session: Option<&Session>,
     romaji_cfg: &mut RomajiConfig,
+    waveform_cfg: &mut WaveformConfig,
+    waveform_peaks: Option<&WaveformPeaks>,
 ) -> LyricsActions {
     let mut actions = LyricsActions::default();
 
     if locked && let Some(session) = active_session {
-        show_teleprompter(ui, session, is_duet, font_size);
+        show_teleprompter(
+            ui,
+            session,
+            is_duet,
+            font_size,
+            preview_pos_s,
+            waveform_cfg,
+            waveform_peaks,
+        );
         return actions;
     }
 
@@ -334,6 +346,9 @@ fn show_teleprompter(
     session: &Session,
     is_duet: bool,
     font_size: &mut f32,
+    pos_s: f64,
+    waveform_cfg: &mut WaveformConfig,
+    waveform_peaks: Option<&WaveformPeaks>,
 ) {
     ui.horizontal(|ui| {
         ui.heading("Tapping Teleprompter");
@@ -344,6 +359,8 @@ fn show_teleprompter(
             if ui.button("A-").clicked() {
                 *font_size = (*font_size - 1.0).max(8.0);
             }
+            ui.separator();
+            waveform::show_header_toggle(ui, waveform_cfg, waveform_peaks);
         });
     });
     ui.separator();
@@ -367,6 +384,11 @@ fn show_teleprompter(
     let wrap_width = (ui.available_width() - 32.0).max(120.0);
 
     for (line_idx_opt, is_current_row, slot_label) in slots {
+        if is_current_row {
+            waveform::show_inline_strip(ui, waveform_cfg, waveform_peaks, pos_s, session, dark);
+            ui.add_space(4.0);
+        }
+
         let row_syls = line_idx_opt.and_then(|idx| lines.get(idx));
         let row_role = row_syls
             .and_then(|indices| indices.first())

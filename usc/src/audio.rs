@@ -34,6 +34,7 @@ type BassChannelSetPositionFn = unsafe extern "system" fn(u32, u64, u32) -> i32;
 type BassChannelBytes2SecondsFn = unsafe extern "system" fn(u32, u64) -> f64;
 type BassChannelSeconds2BytesFn = unsafe extern "system" fn(u32, f64) -> u64;
 type BassChannelSetAttributeFn = unsafe extern "system" fn(u32, u32, f32) -> i32;
+type BassChannelGetDataFn = unsafe extern "system" fn(u32, *mut c_void, u32) -> u32;
 type BassFxGetVersionFn = unsafe extern "system" fn() -> u32;
 type BassFxTempoCreateFn = unsafe extern "system" fn(u32, u32) -> u32;
 type BassFxBpmDecodeGetFn =
@@ -43,6 +44,13 @@ type BassFxBpmDecodeGetFn =
 pub struct AudioInfo {
     pub duration_s: f64,
     pub bpm: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaveformPeaks {
+    pub bin_ms: f64,
+    pub peaks: Vec<f32>,
+    pub source_label: String,
 }
 
 pub struct BassLibs {
@@ -64,6 +72,7 @@ pub struct BassLibs {
     bass_channel_bytes2seconds: BassChannelBytes2SecondsFn,
     bass_channel_seconds2bytes: BassChannelSeconds2BytesFn,
     bass_channel_set_attribute: BassChannelSetAttributeFn,
+    bass_channel_get_data: BassChannelGetDataFn,
     bass_fx_get_version: BassFxGetVersionFn,
     bass_fx_tempo_create: BassFxTempoCreateFn,
     bass_fx_bpm_decode_get: BassFxBpmDecodeGetFn,
@@ -127,6 +136,7 @@ impl BassLibs {
                 bass_channel_bytes2seconds: *bass.get(b"BASS_ChannelBytes2Seconds\0").map_err(sym_err)?,
                 bass_channel_seconds2bytes: *bass.get(b"BASS_ChannelSeconds2Bytes\0").map_err(sym_err)?,
                 bass_channel_set_attribute: *bass.get(b"BASS_ChannelSetAttribute\0").map_err(sym_err)?,
+                bass_channel_get_data: *bass.get(b"BASS_ChannelGetData\0").map_err(sym_err)?,
                 bass_fx_get_version: *bass_fx.get(b"BASS_FX_GetVersion\0").map_err(sym_err)?,
                 bass_fx_tempo_create: *bass_fx.get(b"BASS_FX_TempoCreate\0").map_err(sym_err)?,
                 bass_fx_bpm_decode_get: *bass_fx.get(b"BASS_FX_BPM_DecodeGet\0").map_err(sym_err)?,
@@ -298,6 +308,47 @@ impl AudioEngine {
         self.libs.versions()
     }
 
+    pub fn extract_peaks(
+        &self,
+        path: &Path,
+        bin_ms: f64,
+        source_label: impl Into<String>,
+    ) -> Result<WaveformPeaks, String> {
+        let handle = self.open_decode_stream(path)?;
+        let bin_s = (bin_ms / 1000.0).max(0.005);
+        let raw_bin_bytes = unsafe { (self.libs.bass_channel_seconds2bytes)(handle, bin_s) };
+        let bin_bytes = (raw_bin_bytes.max(4) as usize) & !1;
+        let samples_per_bin = bin_bytes / 2;
+        let mut buf = vec![0i16; samples_per_bin];
+        let mut peaks = Vec::new();
+
+        loop {
+            let got = unsafe {
+                (self.libs.bass_channel_get_data)(
+                    handle,
+                    buf.as_mut_ptr() as *mut c_void,
+                    bin_bytes as u32,
+                )
+            };
+            if got == u32::MAX || got == 0 {
+                break;
+            }
+            let n_samples = (got as usize / 2).min(buf.len());
+            peaks.push(peak_of_i16_slice(&buf[..n_samples]));
+        }
+
+        unsafe {
+            (self.libs.bass_stream_free)(handle);
+        }
+
+        normalize_peaks(&mut peaks);
+        Ok(WaveformPeaks {
+            bin_ms,
+            peaks,
+            source_label: source_label.into(),
+        })
+    }
+
     fn open_decode_stream(&self, path: &Path) -> Result<u32, String> {
         let handle = open_stream_platform(self.libs.bass_stream_create_file, path)?;
         if handle == 0 {
@@ -316,6 +367,24 @@ impl Drop for AudioEngine {
         self.stop();
         unsafe {
             (self.libs.bass_free)();
+        }
+    }
+}
+
+pub fn peak_of_i16_slice(samples: &[i16]) -> f32 {
+    let max_abs = samples
+        .iter()
+        .map(|&s| i32::from(s).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    (max_abs as f32 / 32768.0).clamp(0.0, 1.0)
+}
+
+pub fn normalize_peaks(peaks: &mut [f32]) {
+    let max_peak = peaks.iter().copied().fold(0.0_f32, f32::max);
+    if max_peak > 0.02 {
+        for p in peaks.iter_mut() {
+            *p = (*p / max_peak).clamp(0.0, 1.0);
         }
     }
 }
@@ -421,6 +490,19 @@ mod tests {
     #[test]
     fn load_missing_libraries_returns_err() {
         assert!(BassLibs::load_from_dir(Path::new("nonexistent_dir_xyz")).is_err());
+    }
+
+    #[test]
+    fn peak_extraction_and_normalization() {
+        assert_eq!(peak_of_i16_slice(&[]), 0.0);
+        assert!((peak_of_i16_slice(&[-16384, 8000]) - 0.5).abs() < 1e-4);
+        assert_eq!(peak_of_i16_slice(&[i16::MIN]), 1.0);
+
+        let mut p = vec![0.1, 0.25, 0.5];
+        normalize_peaks(&mut p);
+        assert!((p[0] - 0.2).abs() < 1e-5);
+        assert!((p[1] - 0.5).abs() < 1e-5);
+        assert!((p[2] - 1.0).abs() < 1e-5);
     }
 
     #[test]

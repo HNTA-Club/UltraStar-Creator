@@ -1,6 +1,7 @@
 pub mod header;
 pub mod lyrics;
 pub mod tap;
+pub mod waveform;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -8,7 +9,8 @@ use std::time::Duration;
 
 use eframe::egui;
 
-use crate::audio::AudioEngine;
+use crate::app::waveform::WaveformConfig;
+use crate::audio::{AudioEngine, WaveformPeaks};
 use crate::lyrics::{Role, clean, syllabify, syllables};
 use crate::media::{FolderMedia, detect_language, dictionaries_dir, read_tags, scan_folder};
 use crate::romaji::{RomajiConfig, contains_japanese, convert_text};
@@ -125,6 +127,8 @@ pub struct UscApp {
     lyrics_cursor: (usize, usize),
     pending_cursor: Option<(usize, usize)>,
     romaji_cfg: RomajiConfig,
+    waveform_cfg: WaveformConfig,
+    waveform_peaks: Option<WaveformPeaks>,
     session: Option<Session>,
     kept_notes: Vec<Note>,
     filter: Filter,
@@ -193,6 +197,8 @@ impl UscApp {
             lyrics_cursor: (0, 0),
             pending_cursor: None,
             romaji_cfg: RomajiConfig::default(),
+            waveform_cfg: WaveformConfig::default(),
+            waveform_peaks: None,
             session: None,
             kept_notes: Vec::new(),
             filter: Filter::All,
@@ -304,7 +310,35 @@ impl UscApp {
         };
         self.finish_modal = None;
         self.status = "Audio loaded. Paste or open lyrics, then press Play (Ctrl+P).".into();
+        self.refresh_waveform_peaks();
         self.refresh_output();
+    }
+
+    fn refresh_waveform_peaks(&mut self) {
+        let Some(base_path) = &self.audio_path else {
+            self.waveform_peaks = None;
+            return;
+        };
+        let Ok(engine) = &self.audio else {
+            self.waveform_peaks = None;
+            return;
+        };
+
+        // Prefer the isolated [Vocals] stem as the amplitude "source of truth" when present
+        let (target_path, label) = if let Some(dir) = base_path.parent()
+            && !self.header.vocals.trim().is_empty()
+        {
+            let voc_path = dir.join(self.header.vocals.trim());
+            if voc_path.is_file() {
+                (voc_path, "Vocals")
+            } else {
+                (base_path.clone(), "Mix")
+            }
+        } else {
+            (base_path.clone(), "Mix")
+        };
+
+        self.waveform_peaks = engine.extract_peaks(&target_path, 20.0, label).ok();
     }
 
     fn refresh_media(&mut self) {
@@ -330,6 +364,7 @@ impl UscApp {
         );
         self.header.vocals = keep_or(&self.header.vocals, &media.audios, &media.vocals);
         self.folder_media = media;
+        self.refresh_waveform_peaks();
         self.refresh_output();
         self.status = "Media folder refreshed.".into();
     }
@@ -415,8 +450,11 @@ impl UscApp {
         };
         let _ = engine.set_tempo(tempo);
         engine.seek_ms(pos_ms);
-        if was_playing && let Err(err) = engine.play() {
+        if was_playing && let Err(err) = engine.resume() {
             self.error_banner = Some(err);
+        }
+        if is_tapping {
+            self.clear_focus = true;
         }
     }
 
@@ -1446,6 +1484,7 @@ impl eframe::App for UscApp {
             .min_width(240.0)
             .show(ctx, |ui| {
                 let prev_duet = self.is_duet;
+                let prev_vocals = self.header.vocals.clone();
                 let act = header::show(
                     ui,
                     &mut self.header,
@@ -1464,6 +1503,9 @@ impl eframe::App for UscApp {
                 }
                 if act.refresh_media {
                     self.refresh_media();
+                }
+                if self.header.vocals != prev_vocals {
+                    self.refresh_waveform_peaks();
                 }
                 if self.is_duet != prev_duet {
                     self.invalidate_session();
@@ -1549,7 +1591,6 @@ impl eframe::App for UscApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let prev_pos_s = if !locked { pos_s } else { 0.0 };
             let act = lyrics::show(
                 ui,
                 &mut self.lyrics_text,
@@ -1561,10 +1602,12 @@ impl eframe::App for UscApp {
                 self.audio_path.is_some(),
                 self.audio.is_ok(),
                 self.preview_state,
-                prev_pos_s,
+                pos_s,
                 self.duration_s,
                 self.session.as_ref(),
                 &mut self.romaji_cfg,
+                &mut self.waveform_cfg,
+                self.waveform_peaks.as_ref(),
             );
             if act.open_file {
                 self.open_lyrics_dialog();
