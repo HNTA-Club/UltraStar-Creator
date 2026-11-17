@@ -1019,6 +1019,7 @@ impl eframe::App for UscApp {
                 self.preview_state,
                 prev_pos_s,
                 self.duration_s,
+                self.session.as_ref(),
             );
             if act.open_file {
                 self.open_lyrics_dialog();

@@ -149,6 +149,39 @@ impl Session {
     pub fn remaining_queue(&self) -> &[usize] {
         &self.queue[self.pos..]
     }
+
+    pub fn is_pressed(&self) -> bool {
+        self.pressed.is_some()
+    }
+
+    pub fn next_syllable(&self) -> Option<usize> {
+        self.queue.get(self.pos + 1).copied()
+    }
+
+    pub fn queued_lines(&self) -> (Vec<Vec<usize>>, usize) {
+        let mut lines: Vec<Vec<usize>> = Vec::new();
+        let mut current_line: Vec<usize> = Vec::new();
+        let mut active_line = 0usize;
+
+        for (q_idx, &syl_idx) in self.queue.iter().enumerate() {
+            if q_idx == self.pos {
+                active_line = lines.len();
+            }
+            current_line.push(syl_idx);
+            let line_ended = if let Some(&next_syl_idx) = self.queue.get(q_idx + 1) {
+                (syl_idx..next_syl_idx).any(|i| self.syllables[i].line_end)
+            } else {
+                true
+            };
+            if line_ended {
+                lines.push(std::mem::take(&mut current_line));
+            }
+        }
+        if self.pos >= self.queue.len() {
+            active_line = lines.len();
+        }
+        (lines, active_line)
+    }
 }
 
 #[cfg(test)]
@@ -306,5 +339,37 @@ mod tests {
         s.release(600.0);
         assert_eq!(s.progress(), (3, 3));
         assert!(s.remaining_queue().is_empty());
+    }
+
+    #[test]
+    fn queued_lines_groups_by_line_boundaries_and_tracks_active_line() {
+        let syl = vec![
+            Syllable { text: "Hel".into(), role: Role::P1, line_end: false },
+            Syllable { text: "lo".into(), role: Role::P1, line_end: false },
+            Syllable { text: "skip".into(), role: Role::P2, line_end: true },
+            Syllable { text: "world".into(), role: Role::P1, line_end: true },
+            Syllable { text: "bye".into(), role: Role::P1, line_end: true },
+        ];
+        let mut s = Session::new(syl, Filter::P1Only, vec![]);
+        let (lines, active) = s.queued_lines();
+        assert_eq!(lines, vec![vec![0, 1], vec![3], vec![4]]);
+        assert_eq!(active, 0);
+        assert_eq!(s.current(), Some(0));
+        assert_eq!(s.next_syllable(), Some(1));
+        assert!(!s.is_pressed());
+
+        s.press(100.0);
+        assert!(s.is_pressed());
+        s.release(200.0);
+        assert!(!s.is_pressed());
+        assert_eq!(s.queued_lines().1, 0);
+        assert_eq!(s.current(), Some(1));
+        assert_eq!(s.next_syllable(), Some(3));
+
+        s.press(300.0);
+        s.release(400.0);
+        assert_eq!(s.queued_lines().1, 1);
+        assert_eq!(s.current(), Some(3));
+        assert_eq!(s.next_syllable(), Some(4));
     }
 }

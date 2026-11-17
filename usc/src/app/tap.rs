@@ -2,7 +2,7 @@ use eframe::egui;
 
 use crate::app::lyrics::{role_accent, role_tint};
 use crate::app::{PlaybackState, format_time, is_play_enabled};
-use crate::lyrics::{Role, Syllable};
+use crate::lyrics::Role;
 use crate::tapping::{Filter, Session};
 
 #[derive(Default)]
@@ -140,20 +140,9 @@ pub fn show(
 
     ui.separator();
 
-    // Tap button + Next 1..5 preview
+    // Tap button
     let dark = ui.visuals().dark_mode;
     let current_syl = session.and_then(|s| s.current().map(|idx| &s.syllables()[idx]));
-    let upcoming: Vec<&Syllable> = session
-        .map(|s| {
-            let syls = s.syllables();
-            s.remaining_queue()
-                .iter()
-                .skip(1)
-                .take(5)
-                .map(|&idx| &syls[idx])
-                .collect()
-        })
-        .unwrap_or_default();
 
     let tap_enabled = state == PlaybackState::Playing && current_syl.is_some();
     let tap_text = current_syl
@@ -182,20 +171,6 @@ pub fn show(
     } else if *mouse_tapping {
         *mouse_tapping = false;
     }
-
-    ui.horizontal_wrapped(|ui| {
-        for (i, syl) in upcoming.iter().enumerate() {
-            let txt = display_syllable(&syl.text, syl.line_end);
-            let mut btn = egui::Button::new(txt);
-            if is_duet {
-                btn = btn
-                    .fill(role_tint(syl.role, dark))
-                    .stroke(egui::Stroke::new(1.5_f32, role_accent(syl.role)));
-            }
-            ui.add_enabled(tap_enabled, btn)
-                .on_disabled_hover_text(format!("Next {}", i + 1));
-        }
-    });
 
     let can_undo = is_active && session.is_some_and(|s| s.progress().0 > 0);
     ui.horizontal(|ui| {

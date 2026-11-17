@@ -3,6 +3,7 @@ use egui::text::{LayoutJob, LayoutSection, TextFormat};
 
 use crate::app::{PreviewState, format_time};
 use crate::lyrics::Role;
+use crate::tapping::Session;
 
 pub fn role_tag(role: Role) -> &'static str {
     match role {
@@ -145,8 +146,14 @@ pub fn show(
     preview_state: PreviewState,
     preview_pos_s: f64,
     duration_s: f64,
+    active_session: Option<&Session>,
 ) -> LyricsActions {
     let mut actions = LyricsActions::default();
+
+    if locked && let Some(session) = active_session {
+        show_teleprompter(ui, session, is_duet, font_size);
+        return actions;
+    }
 
     ui.heading("Song Lyrics");
     ui.add_space(4.0);
@@ -268,6 +275,206 @@ pub fn show(
 fn role_button(ui: &mut egui::Ui, label: &str, role: Role) -> egui::Response {
     let accent = role_accent(role);
     ui.add(egui::Button::new(egui::RichText::new(label).color(accent)))
+}
+
+fn show_teleprompter(
+    ui: &mut egui::Ui,
+    session: &Session,
+    is_duet: bool,
+    font_size: &mut f32,
+) {
+    ui.horizontal(|ui| {
+        ui.heading("Tapping Teleprompter");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("A+").clicked() {
+                *font_size = (*font_size + 1.0).min(24.0);
+            }
+            if ui.button("A-").clicked() {
+                *font_size = (*font_size - 1.0).max(8.0);
+            }
+        });
+    });
+    ui.separator();
+    ui.add_space(12.0);
+
+    let (lines, active_line) = session.queued_lines();
+    let syls = session.syllables();
+    let current_syl = session.current();
+    let next_syl = session.next_syllable();
+    let is_pressed = session.is_pressed();
+    let dark = ui.visuals().dark_mode;
+    let prompter_px = (*font_size + 7.0).clamp(16.0, 32.0);
+    let font_id = egui::FontId::proportional(prompter_px);
+
+    let slots: [(Option<usize>, bool, &str); 4] = [
+        (active_line.checked_sub(1), false, "Previous"),
+        (Some(active_line), true, "Current"),
+        (Some(active_line + 1), false, "Next"),
+        (Some(active_line + 2), false, "Upcoming"),
+    ];
+
+    let wrap_width = (ui.available_width() - 32.0).max(120.0);
+
+    for (line_idx_opt, is_current_row, slot_label) in slots {
+        let row_syls = line_idx_opt.and_then(|idx| lines.get(idx));
+        let row_role = row_syls
+            .and_then(|indices| indices.first())
+            .and_then(|&i| syls.get(i))
+            .map_or(Role::Solo, |s| s.role);
+
+        let frame_fill = if is_current_row {
+            if is_duet && row_role != Role::Solo {
+                role_tint(row_role, dark)
+            } else if dark {
+                egui::Color32::from_rgb(30, 41, 59)
+            } else {
+                egui::Color32::from_rgb(241, 245, 249)
+            }
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+
+        let frame_stroke = if is_current_row {
+            let border_color = if is_duet && row_role != Role::Solo {
+                role_accent(row_role)
+            } else if dark {
+                egui::Color32::from_rgb(71, 85, 105)
+            } else {
+                egui::Color32::from_rgb(148, 163, 184)
+            };
+            egui::Stroke::new(1.5_f32, border_color)
+        } else {
+            egui::Stroke::NONE
+        };
+
+        egui::Frame::new()
+            .fill(frame_fill)
+            .stroke(frame_stroke)
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.set_min_height(prompter_px * 1.6);
+
+                let Some(indices) = row_syls else {
+                    ui.colored_label(
+                        egui::Color32::from_gray(if dark { 75 } else { 180 }),
+                        egui::RichText::new("—").size(prompter_px),
+                    );
+                    return;
+                };
+
+                let job = build_teleprompter_row_job(
+                    indices,
+                    syls,
+                    is_current_row,
+                    current_syl,
+                    next_syl,
+                    is_pressed,
+                    is_duet,
+                    row_role,
+                    dark,
+                    font_id.clone(),
+                    wrap_width,
+                );
+                ui.label(job).on_hover_text(slot_label);
+            });
+
+        ui.add_space(8.0);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_teleprompter_row_job(
+    indices: &[usize],
+    syls: &[crate::lyrics::Syllable],
+    is_current_row: bool,
+    current_syl: Option<usize>,
+    next_syl: Option<usize>,
+    is_pressed: bool,
+    is_duet: bool,
+    row_role: Role,
+    dark: bool,
+    font_id: egui::FontId,
+    wrap_width: f32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+
+    let muted_fg = if dark {
+        egui::Color32::from_rgb(125, 138, 158)
+    } else {
+        egui::Color32::from_rgb(130, 142, 160)
+    };
+    let active_row_fg = if dark {
+        egui::Color32::from_rgb(248, 250, 252)
+    } else {
+        egui::Color32::from_rgb(15, 23, 42)
+    };
+
+    if is_duet && row_role != Role::Solo {
+        let tag = format!("{} ", role_tag(row_role));
+        let start = job.text.len();
+        job.text.push_str(&tag);
+        let badge_color = if is_current_row {
+            role_accent(row_role)
+        } else {
+            muted_fg
+        };
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: start..job.text.len(),
+            format: TextFormat {
+                font_id: font_id.clone(),
+                color: badge_color,
+                ..Default::default()
+            },
+        });
+    }
+
+    for &syl_idx in indices {
+        let Some(syl) = syls.get(syl_idx) else {
+            continue;
+        };
+        let start = job.text.len();
+        job.text.push_str(&syl.text);
+        let end = job.text.len();
+
+        let (color, background) = if !is_current_row {
+            (muted_fg, egui::Color32::TRANSPARENT)
+        } else if Some(syl_idx) == current_syl {
+            let bg = if is_pressed {
+                egui::Color32::from_rgb(22, 163, 74)
+            } else {
+                egui::Color32::from_rgb(37, 99, 235)
+            };
+            (egui::Color32::WHITE, bg)
+        } else if Some(syl_idx) == next_syl {
+            let bg = if dark {
+                egui::Color32::from_rgba_unmultiplied(59, 130, 246, 75)
+            } else {
+                egui::Color32::from_rgba_unmultiplied(147, 197, 253, 160)
+            };
+            (active_row_fg, bg)
+        } else if current_syl.is_some_and(|cur| syl_idx < cur) {
+            (muted_fg, egui::Color32::TRANSPARENT)
+        } else {
+            (active_row_fg, egui::Color32::TRANSPARENT)
+        };
+
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: start..end,
+            format: TextFormat {
+                font_id: font_id.clone(),
+                color,
+                background,
+                ..Default::default()
+            },
+        });
+    }
+
+    job
 }
 
 fn build_lyrics_layout(
