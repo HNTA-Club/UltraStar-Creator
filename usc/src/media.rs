@@ -56,6 +56,9 @@ pub fn read_tags(path: &Path) -> Tags {
 }
 
 pub fn detect_language(text: &str) -> Option<&'static str> {
+    if crate::romaji::contains_japanese(text) {
+        return Some("Japanese");
+    }
     let info = whatlang::detect(text)?;
     match info.lang() {
         Lang::Ara => Some("Arabic"),
@@ -128,7 +131,8 @@ pub fn scan_folder(audio_path: &Path) -> FolderMedia {
 
     media.cover = pick_cover(&media.images);
     media.background = pick_background(&media.images);
-    media.video = media.videos.first().cloned();
+    media.video = find_ci(&media.videos, &["_muted", "[vid]"])
+        .or_else(|| media.videos.first().cloned());
 
     let main_name = audio_path
         .file_name()
@@ -344,7 +348,27 @@ mod tests {
             detect_language("Esta es una canción en español sobre el verano y el mar."),
             Some("Spanish")
         );
+        assert_eq!(detect_language("太陽のもと 旅立とう"), Some("Japanese"));
         assert_eq!(detect_language(""), None);
+    }
+
+    #[test]
+    fn scan_folder_prefers_muted_video_and_vid2stems_outputs() {
+        let dir = TempDir::new().unwrap();
+        let main_mp3 = dir.path().join("song.mp3");
+        for name in [
+            "song.mp3",
+            "song.mp4",
+            "song_muted.mp4",
+            "song [Vocals].mp3",
+            "song [Instrumental].mp3",
+        ] {
+            fs::write(dir.path().join(name), b"").unwrap();
+        }
+        let got = scan_folder(&main_mp3);
+        assert_eq!(got.video.as_deref(), Some("song_muted.mp4"));
+        assert_eq!(got.vocals.as_deref(), Some("song [Vocals].mp3"));
+        assert_eq!(got.instrumental.as_deref(), Some("song [Instrumental].mp3"));
     }
 
     #[test]

@@ -1,0 +1,3 @@
+[env]
+ORT_CACHE_DIR = { value = "target/ort-cache", relative = true }
+LINDERA_BUILD_DICTIONARY_CACHE_DIR = { value = "target/lindera-cache", relative = true }

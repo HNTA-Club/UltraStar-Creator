@@ -7,7 +7,9 @@ edition = "2024"
 arboard = "3"
 eframe = "0.33"
 libloading = "0.8"
+lindera = { version = "6.2", features = ["embed-ipadic"] }
 lofty = "0.22"
+stem-splitter-core = { version = "1.2", default-features = false, features = ["directml", "coreml", "onednn", "xnnpack"] }
 whatlang = "0.16"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]

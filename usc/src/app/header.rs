@@ -167,6 +167,7 @@ pub const SONGS_GENRES: &[&str] = &[
 #[derive(Default)]
 pub struct HeaderActions {
     pub browse_audio: bool,
+    pub prepare_stems: bool,
     pub refresh_media: bool,
     pub changed: bool,
 }
@@ -187,12 +188,19 @@ pub fn show(
     ui.heading("Song Header");
     ui.add_space(4.0);
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(!locked, egui::Button::new("Browse Audio..."))
             .clicked()
         {
             actions.browse_audio = true;
+        }
+        if ui
+            .add_enabled(!locked, egui::Button::new("Prepare Media / Stems…"))
+            .on_hover_text("Split video/audio into Muted MP4, Vocals, and Instrumental stems (HTDemucs)")
+            .clicked()
+        {
+            actions.prepare_stems = true;
         }
         if ui
             .add_enabled(has_audio && !locked, egui::Button::new("Refresh (F5)"))

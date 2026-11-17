@@ -3,6 +3,7 @@ pub mod lyrics;
 pub mod tap;
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use eframe::egui;
@@ -10,7 +11,9 @@ use eframe::egui;
 use crate::audio::AudioEngine;
 use crate::lyrics::{Role, clean, syllabify, syllables};
 use crate::media::{FolderMedia, detect_language, dictionaries_dir, read_tags, scan_folder};
+use crate::romaji::{RomajiConfig, contains_japanese, convert_text};
 use crate::song::{Header, render};
+use crate::stems::{ComputeDevice, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, process_media};
 use crate::tapping::{Filter, Note, Session};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,14 +59,55 @@ pub enum PreviewState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MonitorTrack {
+    Mix,
+    Vocals,
+    Instrumental,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FinishModal {
     DuetPass { tapped: usize, total: usize },
     SongComplete,
 }
 
+struct StemsModalState {
+    open: bool,
+    source_input: Option<PathBuf>,
+    output_dir: PathBuf,
+    preset: VideoPreset,
+    device: ComputeDevice,
+    running: bool,
+    progress: f32,
+    status_line: String,
+    logs: Vec<String>,
+    rx: Option<Receiver<StemsEvent>>,
+}
+
+impl Default for StemsModalState {
+    fn default() -> Self {
+        let default_out = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("output");
+        Self {
+            open: false,
+            source_input: None,
+            output_dir: default_out,
+            preset: VideoPreset::Compact,
+            device: ComputeDevice::Auto,
+            running: false,
+            progress: 0.0,
+            status_line: "Ready.".into(),
+            logs: Vec::new(),
+            rx: None,
+        }
+    }
+}
+
 pub struct UscApp {
     audio: Result<AudioEngine, String>,
     audio_path: Option<PathBuf>,
+    monitor_track: MonitorTrack,
     duration_s: f64,
     header: Header,
     is_duet: bool,
@@ -73,6 +117,7 @@ pub struct UscApp {
     lyrics_text: String,
     lyrics_cursor: (usize, usize),
     pending_cursor: Option<(usize, usize)>,
+    romaji_cfg: RomajiConfig,
     session: Option<Session>,
     kept_notes: Vec<Note>,
     filter: Filter,
@@ -89,6 +134,7 @@ pub struct UscApp {
     status: String,
     error_banner: Option<String>,
     finish_modal: Option<FinishModal>,
+    stems_modal: StemsModalState,
 }
 
 impl UscApp {
@@ -125,6 +171,7 @@ impl UscApp {
         let mut app = Self {
             audio,
             audio_path: None,
+            monitor_track: MonitorTrack::Mix,
             duration_s: 0.0,
             header: Header {
                 creator,
@@ -138,6 +185,7 @@ impl UscApp {
             lyrics_text: String::new(),
             lyrics_cursor: (0, 0),
             pending_cursor: None,
+            romaji_cfg: RomajiConfig::default(),
             session: None,
             kept_notes: Vec::new(),
             filter: Filter::All,
@@ -151,9 +199,10 @@ impl UscApp {
             default_dir,
             mouse_tapping: false,
             clear_focus: false,
-            status: "Open or drop an audio file to begin.".into(),
+            status: "Open or drop an audio/video file to begin.".into(),
             error_banner,
             finish_modal: None,
+            stems_modal: StemsModalState::default(),
         };
 
         if let Some(path) = initial_audio {
@@ -236,6 +285,7 @@ impl UscApp {
         };
         self.folder_media = media;
         self.audio_path = Some(path);
+        self.monitor_track = MonitorTrack::Mix;
         self.duration_s = duration_s;
         self.session = None;
         self.kept_notes.clear();
@@ -296,37 +346,125 @@ impl UscApp {
         self.invalidate_session();
     }
 
-    fn syllabify_current(&mut self) {
-        if self.header.language.trim().is_empty() {
-            if let Some(lang) = detect_language(&self.lyrics_text) {
-                self.header.language = lang.to_string();
-            } else {
-                self.status = "Select a song Language first to syllabify.".into();
-                return;
+    fn active_audio_file(&self) -> Option<PathBuf> {
+        let base_path = self.audio_path.as_ref()?;
+        let dir = base_path.parent()?;
+        match self.monitor_track {
+            MonitorTrack::Mix => Some(base_path.clone()),
+            MonitorTrack::Vocals => {
+                let v = self.header.vocals.trim();
+                if !v.is_empty() {
+                    let p = dir.join(v);
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+                Some(base_path.clone())
             }
-        }
-        let Some(dir) = dictionaries_dir() else {
-            self.status = "Syllabification dictionaries folder not found.".into();
-            return;
-        };
-        let dict_path = dir.join(format!("{}.txt", self.header.language.trim()));
-        match std::fs::read_to_string(&dict_path) {
-            Ok(dict) => {
-                self.lyrics_text = syllabify(&self.lyrics_text, &dict);
-                self.invalidate_session();
-                self.status = format!("Syllabified using {}.txt.", self.header.language.trim());
-            }
-            Err(_) => {
-                self.status = format!(
-                    "No syllabification dictionary for '{}'.",
-                    self.header.language.trim()
-                );
+            MonitorTrack::Instrumental => {
+                let i = self.header.instrumental.trim();
+                if !i.is_empty() {
+                    let p = dir.join(i);
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+                Some(base_path.clone())
             }
         }
     }
 
+    fn switch_monitor_track(&mut self, new_track: MonitorTrack) {
+        if self.monitor_track == new_track {
+            return;
+        }
+        self.monitor_track = new_track;
+        let Some(target_path) = self.active_audio_file() else {
+            return;
+        };
+
+        let is_tapping = matches!(self.state, PlaybackState::Playing | PlaybackState::Paused);
+        let is_preview = matches!(
+            self.preview_state,
+            PreviewState::Playing | PreviewState::Paused
+        );
+        if !is_tapping && !is_preview {
+            return;
+        }
+
+        let Ok(engine) = &mut self.audio else {
+            return;
+        };
+        let pos_ms = engine.position_ms();
+        let was_playing = engine.is_playing();
+        if let Err(err) = engine.open(&target_path) {
+            self.error_banner = Some(err);
+            return;
+        }
+        let tempo = if is_tapping {
+            (self.speed_pct - 100) as f32
+        } else {
+            0.0
+        };
+        let _ = engine.set_tempo(tempo);
+        engine.seek_ms(pos_ms);
+        if was_playing && let Err(err) = engine.play() {
+            self.error_banner = Some(err);
+        }
+    }
+
+    fn syllabify_current(&mut self) {
+        let mut did_japanese = false;
+        if contains_japanese(&self.lyrics_text) {
+            self.lyrics_text = convert_text(&self.lyrics_text, &self.romaji_cfg);
+            if self.header.language.trim().is_empty() {
+                self.header.language = "Japanese".into();
+            }
+            did_japanese = true;
+        }
+
+        if self.header.language.trim().is_empty() {
+            if let Some(lang) = detect_language(&self.lyrics_text) {
+                self.header.language = lang.to_string();
+            } else if !did_japanese {
+                self.status = "Select a song Language first to syllabify.".into();
+                return;
+            }
+        }
+
+        if let Some(dir) = dictionaries_dir() {
+            let dict_lang = if did_japanese && self.header.language.trim() == "Japanese" {
+                "English".to_owned()
+            } else {
+                self.header.language.trim().to_owned()
+            };
+            let dict_path = dir.join(format!("{dict_lang}.txt"));
+            if let Ok(dict) = std::fs::read_to_string(&dict_path) {
+                self.lyrics_text = syllabify(&self.lyrics_text, &dict);
+                self.invalidate_session();
+                if did_japanese {
+                    self.status =
+                        format!("Romanized Japanese morae & syllabified ({dict_lang}.txt).");
+                } else {
+                    self.status = format!("Syllabified using {dict_lang}.txt.");
+                }
+                return;
+            }
+        }
+
+        if did_japanese {
+            self.invalidate_session();
+            self.status = "Romanized & mora-split Japanese lyrics.".into();
+        } else {
+            self.status = format!(
+                "No syllabification dictionary for '{}'.",
+                self.header.language.trim()
+            );
+        }
+    }
+
     fn toggle_play_pause(&mut self) {
-        let Some(audio_path) = self.audio_path.clone() else {
+        let Some(audio_path) = self.active_audio_file() else {
             return;
         };
         match self.state {
@@ -511,7 +649,7 @@ impl UscApp {
         if matches!(self.state, PlaybackState::Playing | PlaybackState::Paused) {
             return;
         }
-        let Some(audio_path) = self.audio_path.clone() else {
+        let Some(audio_path) = self.active_audio_file() else {
             return;
         };
         let Ok(engine) = &mut self.audio else {
@@ -722,6 +860,262 @@ impl UscApp {
         }
     }
 
+    fn open_stems_modal(&mut self, initial_source: Option<PathBuf>) {
+        self.stems_modal.open = true;
+        if let Some(src) = initial_source {
+            if let Some(parent) = src.parent() {
+                self.stems_modal.output_dir = parent.to_path_buf();
+            }
+            self.stems_modal.source_input = Some(src);
+        } else if self.stems_modal.source_input.is_none()
+            && let Some(dir) = &self.default_dir
+        {
+            self.stems_modal.output_dir = dir.clone();
+        }
+    }
+
+    fn start_stems_processing(&mut self) {
+        if self.stems_modal.running {
+            return;
+        }
+        let Some(source_input) = self.stems_modal.source_input.clone() else {
+            self.stems_modal.status_line = "Please select a source video or audio file first.".into();
+            return;
+        };
+        let job = StemsJob {
+            source_input,
+            output_dir: self.stems_modal.output_dir.clone(),
+            preset: self.stems_modal.preset,
+            device: self.stems_modal.device,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.stems_modal.running = true;
+        self.stems_modal.progress = 0.01;
+        self.stems_modal.status_line = "Starting parallel media & HTDemucs pipeline…".into();
+        self.stems_modal.logs.clear();
+        self.stems_modal.rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let tx_done = tx.clone();
+            let res = process_media(&job, Some(tx));
+            let _ = tx_done.send(StemsEvent::Finished(res));
+        });
+    }
+
+    fn poll_stems_worker(&mut self, ctx: &egui::Context) {
+        let mut finished_result = None;
+        if let Some(rx) = &self.stems_modal.rx {
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    StemsEvent::Log(msg) => {
+                        self.stems_modal.logs.push(msg);
+                    }
+                    StemsEvent::Progress { fraction, status } => {
+                        self.stems_modal.progress = fraction;
+                        self.stems_modal.status_line = status;
+                    }
+                    StemsEvent::Finished(res) => {
+                        finished_result = Some(res);
+                    }
+                }
+            }
+        }
+        if self.stems_modal.running {
+            ctx.request_repaint_after(Duration::from_millis(80));
+        }
+        if let Some(res) = finished_result {
+            self.stems_modal.running = false;
+            self.stems_modal.rx = None;
+            match res {
+                Ok(derived) => {
+                    self.stems_modal.progress = 1.0;
+                    self.stems_modal.status_line =
+                        "Complete! Loaded separated stems & muted video into project.".into();
+                    self.stems_modal.open = false;
+                    self.load_audio(derived.mp3);
+                    self.status =
+                        "Media & stems prepared! Toggle [Mix | Vocals | Inst] in the right pane while tapping."
+                            .into();
+                }
+                Err(err) => {
+                    self.stems_modal.status_line = format!("Failed: {err}");
+                    self.stems_modal.logs.push(format!("ERROR: {err}"));
+                }
+            }
+        }
+    }
+
+    fn show_stems_modal(&mut self, ctx: &egui::Context) {
+        if !self.stems_modal.open {
+            return;
+        }
+        let mut open = self.stems_modal.open;
+        let mut start_clicked = false;
+        let running = self.stems_modal.running;
+        let ffmpeg_ok = get_ffmpeg_path().is_some();
+
+        egui::Window::new("Prepare Media & Split Stems (HTDemucs)")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(540.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Splits any video or audio file into Master MP3, Muted Video (.mp4), Isolated Vocals, and Peak-Limited Instrumental using HTDemucs.",
+                );
+                ui.add_space(6.0);
+
+                ui.add_enabled_ui(!running, |ui| {
+                    egui::Grid::new("stems_modal_grid")
+                        .num_columns(3)
+                        .spacing([8.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Source Media:");
+                            let mut src_str = self
+                                .stems_modal
+                                .source_input
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut src_str)
+                                    .hint_text("Select video (.mp4/.mkv/.webm) or audio (.flac/.wav/.mp3)")
+                                    .desired_width(310.0),
+                            );
+                            if ui.button("Browse…").clicked() {
+                                let mut dlg = rfd::FileDialog::new().add_filter(
+                                    "Media files",
+                                    &[
+                                        "mp4", "mkv", "webm", "mov", "avi", "flac", "wav", "mp3",
+                                        "ogg", "m4a", "opus",
+                                    ],
+                                );
+                                if let Some(dir) = &self.default_dir {
+                                    dlg = dlg.set_directory(dir);
+                                }
+                                if let Some(p) = dlg.pick_file() {
+                                    if let Some(parent) = p.parent() {
+                                        self.stems_modal.output_dir = parent.to_path_buf();
+                                        self.default_dir = Some(parent.to_path_buf());
+                                    }
+                                    self.stems_modal.source_input = Some(p);
+                                }
+                            }
+                            ui.end_row();
+
+                            ui.label("Output Folder:");
+                            let mut out_str =
+                                self.stems_modal.output_dir.to_string_lossy().into_owned();
+                            if ui
+                                .add(egui::TextEdit::singleline(&mut out_str).desired_width(310.0))
+                                .changed()
+                            {
+                                self.stems_modal.output_dir = PathBuf::from(out_str);
+                            }
+                            if ui.button("Browse…").clicked() {
+                                let mut dlg = rfd::FileDialog::new();
+                                if self.stems_modal.output_dir.is_dir() {
+                                    dlg = dlg.set_directory(&self.stems_modal.output_dir);
+                                }
+                                if let Some(folder) = dlg.pick_folder() {
+                                    self.stems_modal.output_dir = folder;
+                                }
+                            }
+                            ui.end_row();
+
+                            ui.label("Video Preset:");
+                            egui::ComboBox::from_id_salt("stems_video_preset")
+                                .selected_text(self.stems_modal.preset.label())
+                                .width(220.0)
+                                .show_ui(ui, |ui| {
+                                    for p in [
+                                        VideoPreset::Compact,
+                                        VideoPreset::Balanced,
+                                        VideoPreset::High,
+                                        VideoPreset::Source,
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut self.stems_modal.preset,
+                                            p,
+                                            p.label(),
+                                        );
+                                    }
+                                });
+                            ui.label("");
+                            ui.end_row();
+
+                            ui.label("Device:");
+                            egui::ComboBox::from_id_salt("stems_compute_device")
+                                .selected_text(self.stems_modal.device.label())
+                                .width(220.0)
+                                .show_ui(ui, |ui| {
+                                    for d in [
+                                        ComputeDevice::Auto,
+                                        ComputeDevice::Cpu,
+                                        ComputeDevice::DirectML,
+                                        ComputeDevice::CoreML,
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut self.stems_modal.device,
+                                            d,
+                                            d.label(),
+                                        );
+                                    }
+                                });
+                            ui.label("");
+                            ui.end_row();
+                        });
+                });
+
+                ui.add_space(6.0);
+                if !ffmpeg_ok {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 38, 38),
+                        "FFmpeg not found on PATH or ./bin. Install FFmpeg (e.g. `winget install Gyan.FFmpeg`) before running.",
+                    );
+                }
+
+                ui.horizontal(|ui| {
+                    let can_start =
+                        !running && ffmpeg_ok && self.stems_modal.source_input.is_some();
+                    if ui
+                        .add_enabled(can_start, egui::Button::new("Start Processing"))
+                        .clicked()
+                    {
+                        start_clicked = true;
+                    }
+                    ui.label(&self.stems_modal.status_line);
+                });
+
+                ui.add_space(4.0);
+                ui.add(
+                    egui::ProgressBar::new(self.stems_modal.progress)
+                        .show_percentage()
+                        .animate(running),
+                );
+
+                if !self.stems_modal.logs.is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("stems_log_scroll")
+                        .max_height(150.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for line in &self.stems_modal.logs {
+                                ui.monospace(line);
+                            }
+                        });
+                }
+            });
+
+        if !running {
+            self.stems_modal.open = open;
+        }
+        if start_clicked {
+            self.start_stems_processing();
+        }
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         if matches!(self.state, PlaybackState::Playing | PlaybackState::Paused) {
             return;
@@ -736,6 +1130,11 @@ impl UscApp {
                     .unwrap_or_default();
                 if matches!(ext.as_str(), "mp3" | "ogg" | "m4a") {
                     self.load_audio(path);
+                } else if matches!(
+                    ext.as_str(),
+                    "mp4" | "mkv" | "webm" | "mov" | "avi" | "flac" | "wav"
+                ) {
+                    self.open_stems_modal(Some(path));
                 } else if ext == "txt" {
                     self.load_lyrics_file(&path);
                 }
@@ -762,6 +1161,8 @@ impl eframe::App for UscApp {
             ThemeMode::Light => ctx.set_visuals(egui::Visuals::light()),
             ThemeMode::Dark => ctx.set_visuals(egui::Visuals::dark()),
         }
+
+        self.poll_stems_worker(ctx);
 
         // Poll stream playback state
         let mut pos_s = 0.0;
@@ -808,6 +1209,16 @@ impl eframe::App for UscApp {
                     {
                         ui.close();
                         self.open_audio_dialog();
+                    }
+                    if ui
+                        .add_enabled(
+                            !locked,
+                            egui::Button::new("Prepare Media / Split Stems (HTDemucs)..."),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.open_stems_modal(None);
                     }
                     if ui
                         .add_enabled(!locked, egui::Button::new("Open Lyrics..."))
@@ -926,6 +1337,9 @@ impl eframe::App for UscApp {
                 if act.browse_audio {
                     self.open_audio_dialog();
                 }
+                if act.prepare_stems {
+                    self.open_stems_modal(None);
+                }
                 if act.refresh_media {
                     self.refresh_media();
                 }
@@ -941,11 +1355,16 @@ impl eframe::App for UscApp {
             .min_width(300.0)
             .show(ctx, |ui| {
                 let tap_pos_s = if locked { pos_s } else { 0.0 };
+                let has_vocals = !self.header.vocals.trim().is_empty();
+                let has_instrumental = !self.header.instrumental.trim().is_empty();
                 let act = tap::show(
                     ui,
                     self.state,
                     self.audio.is_ok(),
                     self.audio_path.is_some(),
+                    has_vocals,
+                    has_instrumental,
+                    self.monitor_track,
                     self.is_duet,
                     tap_pos_s,
                     self.duration_s,
@@ -975,6 +1394,9 @@ impl eframe::App for UscApp {
                     && locked
                 {
                     let _ = engine.set_tempo((self.speed_pct - 100) as f32);
+                }
+                if let Some(new_mon) = act.monitor_changed {
+                    self.switch_monitor_track(new_mon);
                 }
                 if let Some(new_filter) = act.filter_changed {
                     self.filter = new_filter;
@@ -1020,6 +1442,7 @@ impl eframe::App for UscApp {
                 prev_pos_s,
                 self.duration_s,
                 self.session.as_ref(),
+                &mut self.romaji_cfg,
             );
             if act.open_file {
                 self.open_lyrics_dialog();
@@ -1047,6 +1470,8 @@ impl eframe::App for UscApp {
                 self.invalidate_session();
             }
         });
+
+        self.show_stems_modal(ctx);
 
         if let Some(modal) = self.finish_modal {
             egui::Window::new(match modal {

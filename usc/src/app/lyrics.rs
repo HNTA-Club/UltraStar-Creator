@@ -3,6 +3,7 @@ use egui::text::{LayoutJob, LayoutSection, TextFormat};
 
 use crate::app::{PreviewState, format_time};
 use crate::lyrics::Role;
+use crate::romaji::{HatsuonMode, LongVowelMode, RomajiConfig};
 use crate::tapping::Session;
 
 pub fn role_tag(role: Role) -> &'static str {
@@ -147,6 +148,7 @@ pub fn show(
     preview_pos_s: f64,
     duration_s: f64,
     active_session: Option<&Session>,
+    romaji_cfg: &mut RomajiConfig,
 ) -> LyricsActions {
     let mut actions = LyricsActions::default();
 
@@ -197,6 +199,56 @@ pub fn show(
             if ui.button("Syllabify").clicked() {
                 actions.syllabify = true;
             }
+            ui.menu_button("JP Romaji ▾", |ui| {
+                ui.label(egui::RichText::new("Japanese Mora Romanizer").strong());
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Split char:");
+                    ui.selectable_value(&mut romaji_cfg.split_char, '•', "• (Bullet)");
+                    ui.selectable_value(&mut romaji_cfg.split_char, '+', "+ (Plus)");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Long vowels:");
+                    ui.selectable_value(
+                        &mut romaji_cfg.long_vowels,
+                        LongVowelMode::Ascii,
+                        "ASCII (tou)",
+                    );
+                    ui.selectable_value(
+                        &mut romaji_cfg.long_vowels,
+                        LongVowelMode::Double,
+                        "Double (too)",
+                    );
+                    ui.selectable_value(
+                        &mut romaji_cfg.long_vowels,
+                        LongVowelMode::Macron,
+                        "Macron (tō)",
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Hatsuon (ん):");
+                    ui.selectable_value(
+                        &mut romaji_cfg.hatsuon,
+                        HatsuonMode::Attach,
+                        "Attach (shin)",
+                    );
+                    ui.selectable_value(
+                        &mut romaji_cfg.hatsuon,
+                        HatsuonMode::Standalone,
+                        "Standalone (shi•n)",
+                    );
+                });
+                ui.checkbox(
+                    &mut romaji_cfg.merge_diphthongs,
+                    "Merge diphthongs (tai•you, se•kai)",
+                );
+                ui.checkbox(&mut romaji_cfg.strict_mora, "Strict mora (split ー)");
+                ui.separator();
+                if ui.button("Romanize Japanese Lyrics Now").clicked() {
+                    actions.syllabify = true;
+                    ui.close();
+                }
+            });
         });
         if ui.button("A-").clicked() {
             *font_size = (*font_size - 1.0).max(8.0);

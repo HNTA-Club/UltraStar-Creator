@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::lyrics::{role_accent, role_tint};
-use crate::app::{PlaybackState, format_time, is_play_enabled};
+use crate::app::{MonitorTrack, PlaybackState, format_time, is_play_enabled};
 use crate::lyrics::Role;
 use crate::tapping::{Filter, Session};
 
@@ -12,6 +12,7 @@ pub struct TapActions {
     pub reset: bool,
     pub seek_s: Option<f64>,
     pub speed_changed: bool,
+    pub monitor_changed: Option<MonitorTrack>,
     pub filter_changed: Option<Filter>,
     pub tap_press: bool,
     pub tap_release: bool,
@@ -37,6 +38,9 @@ pub fn show(
     state: PlaybackState,
     bass_ok: bool,
     has_audio: bool,
+    has_vocals: bool,
+    has_instrumental: bool,
+    monitor_track: MonitorTrack,
     is_duet: bool,
     pos_s: f64,
     duration_s: f64,
@@ -110,6 +114,42 @@ pub fn show(
             actions.speed_changed = true;
         }
     });
+
+    if has_vocals || has_instrumental {
+        ui.horizontal(|ui| {
+            ui.label("Monitor:");
+            let mut cur = monitor_track;
+            if ui
+                .selectable_value(&mut cur, MonitorTrack::Mix, "Mix")
+                .on_hover_text("Listen to full mix while tapping")
+                .changed()
+            {
+                actions.monitor_changed = Some(cur);
+            }
+            if ui
+                .add_enabled(
+                    has_vocals,
+                    egui::Button::selectable(cur == MonitorTrack::Vocals, "Vocals"),
+                )
+                .on_hover_text("Listen to isolated vocals while tapping (#MP3 stays on Mix)")
+                .clicked()
+                && cur != MonitorTrack::Vocals
+            {
+                actions.monitor_changed = Some(MonitorTrack::Vocals);
+            }
+            if ui
+                .add_enabled(
+                    has_instrumental,
+                    egui::Button::selectable(cur == MonitorTrack::Instrumental, "Inst"),
+                )
+                .on_hover_text("Listen to instrumental backing track while tapping")
+                .clicked()
+                && cur != MonitorTrack::Instrumental
+            {
+                actions.monitor_changed = Some(MonitorTrack::Instrumental);
+            }
+        });
+    }
 
     if is_duet {
         let can_change_filter =

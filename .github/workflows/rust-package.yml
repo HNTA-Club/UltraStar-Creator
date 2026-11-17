@@ -19,6 +19,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: usc
+      - name: Prepare target directories for ort-sys dylib copy
+        shell: bash
+        working-directory: usc
+        run: mkdir -p target/debug/examples target/debug/deps target/debug/build/examples target/debug/build/deps target/release/examples target/release/deps target/release/build/examples target/release/build/deps
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: usc
       - run: cargo test
@@ -36,6 +40,8 @@ jobs:
           Expand-Archive -Path bass.zip -DestinationPath bass-tmp -Force
           Expand-Archive -Path bass_fx.zip -DestinationPath fx-tmp -Force
           Copy-Item usc/target/release/usc.exe dist/
+          $dml = Get-ChildItem -Recurse usc/target -Filter DirectML.dll | Select-Object -First 1
+          if ($dml) { Copy-Item $dml.FullName dist/ }
           Copy-Item bass-tmp/x64/bass.dll dist/
           Copy-Item fx-tmp/x64/bass_fx.dll dist/
           Copy-Item syllabification/*.txt dist/

@@ -24,5 +24,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: usc
+      - name: Prepare target directories for ort-sys dylib copy
+        shell: bash
+        run: mkdir -p target/debug/examples target/debug/deps target/debug/build/examples target/debug/build/deps
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
