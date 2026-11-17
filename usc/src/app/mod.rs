@@ -13,7 +13,10 @@ use crate::lyrics::{Role, clean, syllabify, syllables};
 use crate::media::{FolderMedia, detect_language, dictionaries_dir, read_tags, scan_folder};
 use crate::romaji::{RomajiConfig, contains_japanese, convert_text};
 use crate::song::{Header, render};
-use crate::stems::{ComputeDevice, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, process_media};
+use crate::stems::{
+    ComputeDevice, SourceMode, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, get_ytdlp_path,
+    process_media, run_tools_setup,
+};
 use crate::tapping::{Filter, Note, Session};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +76,9 @@ enum FinishModal {
 
 struct StemsModalState {
     open: bool,
-    source_input: Option<PathBuf>,
+    source_mode: SourceMode,
+    file_path: String,
+    url_input: String,
     output_dir: PathBuf,
     preset: VideoPreset,
     device: ComputeDevice,
@@ -91,7 +96,9 @@ impl Default for StemsModalState {
             .join("output");
         Self {
             open: false,
-            source_input: None,
+            source_mode: SourceMode::File,
+            file_path: String::new(),
+            url_input: String::new(),
             output_dir: default_out,
             preset: VideoPreset::Compact,
             device: ComputeDevice::Auto,
@@ -866,22 +873,48 @@ impl UscApp {
             if let Some(parent) = src.parent() {
                 self.stems_modal.output_dir = parent.to_path_buf();
             }
-            self.stems_modal.source_input = Some(src);
-        } else if self.stems_modal.source_input.is_none()
+            self.stems_modal.source_mode = SourceMode::File;
+            self.stems_modal.file_path = src.to_string_lossy().into_owned();
+        } else if self.stems_modal.file_path.is_empty()
             && let Some(dir) = &self.default_dir
         {
             self.stems_modal.output_dir = dir.clone();
         }
     }
 
+    fn start_tools_setup(&mut self) {
+        if self.stems_modal.running {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.stems_modal.running = true;
+        self.stems_modal.progress = 0.05;
+        self.stems_modal.status_line = "Checking & downloading FFmpeg / yt-dlp into ./bin…".into();
+        self.stems_modal.logs.clear();
+        self.stems_modal.rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let tx_done = tx.clone();
+            let res = run_tools_setup(false, Some(tx));
+            let _ = tx_done.send(StemsEvent::SetupFinished(res));
+        });
+    }
+
     fn start_stems_processing(&mut self) {
         if self.stems_modal.running {
             return;
         }
-        let Some(source_input) = self.stems_modal.source_input.clone() else {
-            self.stems_modal.status_line = "Please select a source video or audio file first.".into();
-            return;
+        let source_input = match self.stems_modal.source_mode {
+            SourceMode::File => self.stems_modal.file_path.trim().to_owned(),
+            SourceMode::Url => self.stems_modal.url_input.trim().to_owned(),
         };
+        if source_input.is_empty() {
+            self.stems_modal.status_line = match self.stems_modal.source_mode {
+                SourceMode::File => "Please select a local video or audio file first.".into(),
+                SourceMode::Url => "Please enter a YouTube or media URL first.".into(),
+            };
+            return;
+        }
         let job = StemsJob {
             source_input,
             output_dir: self.stems_modal.output_dir.clone(),
@@ -904,6 +937,7 @@ impl UscApp {
 
     fn poll_stems_worker(&mut self, ctx: &egui::Context) {
         let mut finished_result = None;
+        let mut setup_result = None;
         if let Some(rx) = &self.stems_modal.rx {
             while let Ok(ev) = rx.try_recv() {
                 match ev {
@@ -914,6 +948,9 @@ impl UscApp {
                         self.stems_modal.progress = fraction;
                         self.stems_modal.status_line = status;
                     }
+                    StemsEvent::SetupFinished(res) => {
+                        setup_result = Some(res);
+                    }
                     StemsEvent::Finished(res) => {
                         finished_result = Some(res);
                     }
@@ -922,6 +959,21 @@ impl UscApp {
         }
         if self.stems_modal.running {
             ctx.request_repaint_after(Duration::from_millis(80));
+        }
+        if let Some(res) = setup_result {
+            self.stems_modal.running = false;
+            self.stems_modal.rx = None;
+            match res {
+                Ok(()) => {
+                    self.stems_modal.progress = 1.0;
+                    self.stems_modal.status_line =
+                        "Tools ready! FFmpeg & yt-dlp are available.".into();
+                }
+                Err(err) => {
+                    self.stems_modal.status_line = format!("Setup failed: {err}");
+                    self.stems_modal.logs.push(format!("ERROR: {err}"));
+                }
+            }
         }
         if let Some(res) = finished_result {
             self.stems_modal.running = false;
@@ -951,63 +1003,96 @@ impl UscApp {
         }
         let mut open = self.stems_modal.open;
         let mut start_clicked = false;
+        let mut setup_clicked = false;
         let running = self.stems_modal.running;
         let ffmpeg_ok = get_ffmpeg_path().is_some();
+        let ytdlp_ok = get_ytdlp_path().is_some();
 
-        egui::Window::new("Prepare Media & Split Stems (HTDemucs)")
+        egui::Window::new("Prepare Media & Split Stems (vid2stems / HTDemucs)")
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(540.0)
+            .default_width(580.0)
             .show(ctx, |ui| {
                 ui.label(
-                    "Splits any video or audio file into Master MP3, Muted Video (.mp4), Isolated Vocals, and Peak-Limited Instrumental using HTDemucs.",
+                    "Splits local media or YouTube/web URLs into Master MP3, Muted Video (.mp4), Isolated Vocals, and Peak-Limited Instrumental using HTDemucs.",
                 );
                 ui.add_space(6.0);
 
                 ui.add_enabled_ui(!running, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Source Mode:").strong());
+                        ui.radio_value(
+                            &mut self.stems_modal.source_mode,
+                            SourceMode::File,
+                            "Local Media (Video / Audio)",
+                        );
+                        ui.radio_value(
+                            &mut self.stems_modal.source_mode,
+                            SourceMode::Url,
+                            "YouTube / Web URL (yt-dlp)",
+                        );
+                    });
+                    ui.add_space(4.0);
+
                     egui::Grid::new("stems_modal_grid")
                         .num_columns(3)
                         .spacing([8.0, 6.0])
                         .show(ui, |ui| {
-                            ui.label("Source Media:");
-                            let mut src_str = self
-                                .stems_modal
-                                .source_input
-                                .as_ref()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            ui.add(
-                                egui::TextEdit::singleline(&mut src_str)
-                                    .hint_text("Select video (.mp4/.mkv/.webm) or audio (.flac/.wav/.mp3)")
-                                    .desired_width(310.0),
-                            );
-                            if ui.button("Browse…").clicked() {
-                                let mut dlg = rfd::FileDialog::new().add_filter(
-                                    "Media files",
-                                    &[
-                                        "mp4", "mkv", "webm", "mov", "avi", "flac", "wav", "mp3",
-                                        "ogg", "m4a", "opus",
-                                    ],
-                                );
-                                if let Some(dir) = &self.default_dir {
-                                    dlg = dlg.set_directory(dir);
-                                }
-                                if let Some(p) = dlg.pick_file() {
-                                    if let Some(parent) = p.parent() {
-                                        self.stems_modal.output_dir = parent.to_path_buf();
-                                        self.default_dir = Some(parent.to_path_buf());
+                            match self.stems_modal.source_mode {
+                                SourceMode::File => {
+                                    ui.label("File Path:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.stems_modal.file_path)
+                                            .hint_text(
+                                                "Select video (.mp4/.mkv/.webm) or audio (.flac/.wav/.mp3)",
+                                            )
+                                            .desired_width(340.0),
+                                    );
+                                    if ui.button("Browse…").clicked() {
+                                        let mut dlg = rfd::FileDialog::new().add_filter(
+                                            "Media files",
+                                            &[
+                                                "mp4", "mkv", "webm", "mov", "avi", "flac", "wav",
+                                                "mp3", "ogg", "m4a", "opus",
+                                            ],
+                                        );
+                                        if let Some(dir) = &self.default_dir {
+                                            dlg = dlg.set_directory(dir);
+                                        }
+                                        if let Some(p) = dlg.pick_file() {
+                                            if let Some(parent) = p.parent() {
+                                                self.stems_modal.output_dir = parent.to_path_buf();
+                                                self.default_dir = Some(parent.to_path_buf());
+                                            }
+                                            self.stems_modal.file_path =
+                                                p.to_string_lossy().into_owned();
+                                        }
                                     }
-                                    self.stems_modal.source_input = Some(p);
+                                    ui.end_row();
+                                }
+                                SourceMode::Url => {
+                                    ui.label("Media URL:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.stems_modal.url_input)
+                                            .hint_text("https://www.youtube.com/watch?v=...")
+                                            .desired_width(340.0),
+                                    );
+                                    if ui.button("Paste").clicked()
+                                        && let Ok(mut cb) = arboard::Clipboard::new()
+                                        && let Ok(text) = cb.get_text()
+                                    {
+                                        self.stems_modal.url_input = text.trim().to_owned();
+                                    }
+                                    ui.end_row();
                                 }
                             }
-                            ui.end_row();
 
                             ui.label("Output Folder:");
                             let mut out_str =
                                 self.stems_modal.output_dir.to_string_lossy().into_owned();
                             if ui
-                                .add(egui::TextEdit::singleline(&mut out_str).desired_width(310.0))
+                                .add(egui::TextEdit::singleline(&mut out_str).desired_width(340.0))
                                 .changed()
                             {
                                 self.stems_modal.output_dir = PathBuf::from(out_str);
@@ -1026,7 +1111,7 @@ impl UscApp {
                             ui.label("Video Preset:");
                             egui::ComboBox::from_id_salt("stems_video_preset")
                                 .selected_text(self.stems_modal.preset.label())
-                                .width(220.0)
+                                .width(230.0)
                                 .show_ui(ui, |ui| {
                                     for p in [
                                         VideoPreset::Compact,
@@ -1047,7 +1132,7 @@ impl UscApp {
                             ui.label("Device:");
                             egui::ComboBox::from_id_salt("stems_compute_device")
                                 .selected_text(self.stems_modal.device.label())
-                                .width(220.0)
+                                .width(230.0)
                                 .show_ui(ui, |ui| {
                                     for d in [
                                         ComputeDevice::Auto,
@@ -1068,16 +1153,51 @@ impl UscApp {
                 });
 
                 ui.add_space(6.0);
-                if !ffmpeg_ok {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(220, 38, 38),
-                        "FFmpeg not found on PATH or ./bin. Install FFmpeg (e.g. `winget install Gyan.FFmpeg`) before running.",
-                    );
-                }
-
                 ui.horizontal(|ui| {
-                    let can_start =
-                        !running && ffmpeg_ok && self.stems_modal.source_input.is_some();
+                    let ok_color = egui::Color32::from_rgb(22, 163, 74);
+                    let miss_color = egui::Color32::from_rgb(220, 38, 38);
+                    ui.colored_label(
+                        if ffmpeg_ok { ok_color } else { miss_color },
+                        if ffmpeg_ok {
+                            "● FFmpeg: Ready"
+                        } else {
+                            "○ FFmpeg: Missing"
+                        },
+                    );
+                    ui.add_space(8.0);
+                    ui.colored_label(
+                        if ytdlp_ok { ok_color } else { miss_color },
+                        if ytdlp_ok {
+                            "● yt-dlp: Ready"
+                        } else {
+                            "○ yt-dlp: Missing"
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(
+                                !running,
+                                egui::Button::new("Check / Download Tools (FFmpeg + yt-dlp)"),
+                            )
+                            .on_hover_text(
+                                "Automatically download portable FFmpeg, FFprobe, and yt-dlp into ./bin/",
+                            )
+                            .clicked()
+                        {
+                            setup_clicked = true;
+                        }
+                    });
+                });
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let has_source = match self.stems_modal.source_mode {
+                        SourceMode::File => !self.stems_modal.file_path.trim().is_empty(),
+                        SourceMode::Url => !self.stems_modal.url_input.trim().is_empty(),
+                    };
+                    let tools_ready = ffmpeg_ok
+                        && (self.stems_modal.source_mode != SourceMode::Url || ytdlp_ok);
+                    let can_start = !running && tools_ready && has_source;
                     if ui
                         .add_enabled(can_start, egui::Button::new("Start Processing"))
                         .clicked()
@@ -1111,7 +1231,9 @@ impl UscApp {
         if !running {
             self.stems_modal.open = open;
         }
-        if start_clicked {
+        if setup_clicked {
+            self.start_tools_setup();
+        } else if start_clicked {
             self.start_stems_processing();
         }
     }

@@ -1,13 +1,21 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::Sender;
+use std::time::SystemTime;
 
 use stem_splitter_core::{
     SplitOptions, SplitProgress, set_download_progress_callback, set_split_progress_callback,
     split_file,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMode {
+    File,
+    Url,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoPreset {
@@ -81,7 +89,7 @@ pub struct DerivedOutputs {
 
 #[derive(Debug, Clone)]
 pub struct StemsJob {
-    pub source_input: PathBuf,
+    pub source_input: String,
     pub output_dir: PathBuf,
     pub preset: VideoPreset,
     pub device: ComputeDevice,
@@ -91,6 +99,7 @@ pub struct StemsJob {
 pub enum StemsEvent {
     Log(String),
     Progress { fraction: f32, status: String },
+    SetupFinished(Result<(), String>),
     Finished(Result<DerivedOutputs, String>),
 }
 
@@ -112,6 +121,17 @@ pub fn binary_filename(name: &str) -> String {
     } else {
         name.to_owned()
     }
+}
+
+pub fn local_bin_dir() -> PathBuf {
+    if let Ok(exe) = env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        return exe_dir.join("bin");
+    }
+    env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("bin")
 }
 
 pub fn find_binary(name: &str) -> Option<PathBuf> {
@@ -155,6 +175,15 @@ pub fn get_ffmpeg_path() -> Option<PathBuf> {
 
 pub fn get_ffprobe_path() -> Option<PathBuf> {
     find_binary("ffprobe")
+}
+
+pub fn get_ytdlp_path() -> Option<PathBuf> {
+    find_binary("yt-dlp")
+}
+
+pub fn is_url(input: &str) -> bool {
+    let trimmed = input.trim().to_ascii_lowercase();
+    trimmed.starts_with("http://") || trimmed.starts_with("https://")
 }
 
 pub fn is_video_extension(path: &Path) -> Option<bool> {
@@ -205,6 +234,151 @@ pub fn derive_output_paths(output_dir: &Path, base_name: &str, has_video: bool) 
         vocals: output_dir.join(format!("{base_name} [Vocals].mp3")),
         instrumental: output_dir.join(format!("{base_name} [Instrumental].mp3")),
     }
+}
+
+pub fn build_ytdlp_args(
+    ffmpeg_bin: Option<&Path>,
+    url: &str,
+    output_dir: &Path,
+) -> Vec<String> {
+    let target_pattern = output_dir.join("%(title)s.%(ext)s");
+    let mut args = vec![
+        "--no-playlist".to_owned(),
+        "-f".to_owned(),
+        "bv*+ba/b".to_owned(),
+        "--merge-output-format".to_owned(),
+        "mp4".to_owned(),
+    ];
+    if let Some(ff) = ffmpeg_bin
+        && let Some(parent) = ff.parent()
+    {
+        args.push("--ffmpeg-location".to_owned());
+        args.push(parent.to_string_lossy().into_owned());
+    }
+    args.extend([
+        "-o".to_owned(),
+        target_pattern.to_string_lossy().into_owned(),
+        url.trim().to_owned(),
+    ]);
+    args
+}
+
+pub fn download_url_media(
+    url: &str,
+    output_dir: &Path,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<PathBuf, String> {
+    let ytdlp_exe = get_ytdlp_path().ok_or_else(|| {
+        "URL downloading requires yt-dlp, which was not found.\nClick 'Download / Setup Tools' to install portable FFmpeg & yt-dlp automatically.".to_owned()
+    })?;
+
+    fs::create_dir_all(output_dir)
+        .map_err(|e| format!("Failed to create download dir: {e}"))?;
+
+    let before_files: HashSet<PathBuf> = fs::read_dir(output_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+
+    send_log(tx, format!("[yt-dlp] Downloading media from URL: {url}"));
+    send_progress(tx, 0.03, "Downloading video via yt-dlp…");
+
+    let ffmpeg_bin = get_ffmpeg_path();
+    let args = build_ytdlp_args(ffmpeg_bin.as_deref(), url, output_dir);
+    let mut cmd = Command::new(&ytdlp_exe);
+    configure_no_window(&mut cmd);
+    cmd.args(&args);
+
+    let out = cmd
+        .output()
+        .map_err(|e| format!("Failed to launch yt-dlp: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = stderr.trim();
+        return Err(format!(
+            "yt-dlp download failed: {}",
+            if msg.is_empty() { "unknown error" } else { msg }
+        ));
+    }
+
+    let after_files: Vec<PathBuf> = fs::read_dir(output_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+
+    let is_media_candidate = |p: &Path| -> bool {
+        let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+            return false;
+        };
+        matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "mp4" | "mkv" | "webm" | "m4a" | "mp3" | "opus" | "wav"
+        ) && !p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .ends_with("_muted.mp4")
+    };
+
+    let mut candidates: Vec<PathBuf> = after_files
+        .iter()
+        .filter(|p| !before_files.contains(*p) && is_media_candidate(p))
+        .cloned()
+        .collect();
+
+    if candidates.is_empty() {
+        candidates = after_files
+            .into_iter()
+            .filter(|p| is_media_candidate(p))
+            .collect();
+    }
+
+    candidates.sort_by_key(|p| {
+        p.metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+
+    let chosen = candidates.pop().ok_or_else(|| {
+        "yt-dlp completed but did not produce a recognized media file.".to_owned()
+    })?;
+
+    send_log(
+        tx,
+        format!(
+            "[yt-dlp] Downloaded: {}",
+            chosen
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("media")
+        ),
+    );
+    Ok(chosen)
+}
+
+pub fn resolve_input_media(
+    source_input: &str,
+    temp_dir: &Path,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<PathBuf, String> {
+    let trimmed = source_input.trim();
+    if trimmed.is_empty() {
+        return Err("Source input is empty.".to_owned());
+    }
+    if is_url(trimmed) {
+        return download_url_media(trimmed, temp_dir, tx);
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_file() {
+        return Ok(path);
+    }
+    Err(format!("Source media file not found: {trimmed}"))
 }
 
 pub fn build_ffmpeg_muted_video_args(
@@ -321,6 +495,224 @@ fn send_progress(tx: &Option<Sender<StemsEvent>>, fraction: f32, status: impl In
     }
 }
 
+fn copy_found_binary_recursive(dir: &Path, file_name: &str, dest: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if copy_found_binary_recursive(&path, file_name, dest) {
+                return true;
+            }
+        } else if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(file_name))
+            && fs::copy(&path, dest).is_ok()
+        {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(dest, fs::Permissions::from_mode(0o755));
+            }
+            return true;
+        }
+    }
+    false
+}
+
+pub fn download_and_extract_ffmpeg(
+    target_bin_dir: &Path,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<(), String> {
+    fs::create_dir_all(target_bin_dir)
+        .map_err(|e| format!("Failed to create bin dir {}: {e}", target_bin_dir.display()))?;
+
+    let url = if cfg!(target_os = "windows") {
+        "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    } else if cfg!(target_os = "linux") {
+        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    } else {
+        return Err(
+            "On macOS, please install FFmpeg via Homebrew: `brew install ffmpeg`".to_owned(),
+        );
+    };
+
+    send_log(tx, format!("Downloading official FFmpeg static build from {url}…"));
+    send_progress(tx, 0.15, "Downloading FFmpeg archive…");
+
+    let resp = reqwest::blocking::get(url)
+        .map_err(|e| format!("Failed to download FFmpeg: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("FFmpeg download returned HTTP {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .map_err(|e| format!("Failed to read FFmpeg archive bytes: {e}"))?;
+
+    let temp_extract = env::temp_dir().join(format!("usc_ffmpeg_setup_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_extract);
+    fs::create_dir_all(&temp_extract)
+        .map_err(|e| format!("Failed to create temp extract dir: {e}"))?;
+
+    let archive_name = if cfg!(target_os = "windows") {
+        "ffmpeg.zip"
+    } else {
+        "ffmpeg.tar.xz"
+    };
+    let archive_path = temp_extract.join(archive_name);
+    fs::write(&archive_path, &bytes)
+        .map_err(|e| format!("Failed to write temporary FFmpeg archive: {e}"))?;
+
+    send_log(tx, "Extracting ffmpeg and ffprobe binaries…");
+    send_progress(tx, 0.50, "Extracting FFmpeg & FFprobe…");
+
+    let mut cmd = Command::new("tar");
+    configure_no_window(&mut cmd);
+    cmd.arg("-xf")
+        .arg(&archive_path)
+        .arg("-C")
+        .arg(&temp_extract);
+    let out = cmd
+        .output()
+        .map_err(|e| format!("Failed to invoke system tar to extract FFmpeg: {e}"))?;
+    if !out.status.success() {
+        let _ = fs::remove_dir_all(&temp_extract);
+        return Err(format!(
+            "Archive extraction failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+
+    let ffmpeg_name = binary_filename("ffmpeg");
+    let ffprobe_name = binary_filename("ffprobe");
+    let ok_ff = copy_found_binary_recursive(
+        &temp_extract,
+        &ffmpeg_name,
+        &target_bin_dir.join(&ffmpeg_name),
+    );
+    let ok_fp = copy_found_binary_recursive(
+        &temp_extract,
+        &ffprobe_name,
+        &target_bin_dir.join(&ffprobe_name),
+    );
+    let _ = fs::remove_dir_all(&temp_extract);
+
+    if !ok_ff || !ok_fp {
+        return Err("Extracted archive did not contain ffmpeg and ffprobe.".to_owned());
+    }
+
+    send_log(
+        tx,
+        format!(
+            "FFmpeg & FFprobe installed to {}",
+            target_bin_dir.display()
+        ),
+    );
+    Ok(())
+}
+
+pub fn download_ytdlp(
+    target_bin_dir: &Path,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<(), String> {
+    fs::create_dir_all(target_bin_dir)
+        .map_err(|e| format!("Failed to create bin dir {}: {e}", target_bin_dir.display()))?;
+
+    let url = if cfg!(target_os = "windows") {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+    } else if cfg!(target_os = "macos") {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+    } else {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+    };
+
+    let dest = target_bin_dir.join(binary_filename("yt-dlp"));
+    send_log(tx, format!("Downloading standalone yt-dlp from {url}…"));
+    send_progress(tx, 0.75, "Downloading yt-dlp…");
+
+    let resp = reqwest::blocking::get(url)
+        .map_err(|e| format!("Failed to download yt-dlp: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("yt-dlp download returned HTTP {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .map_err(|e| format!("Failed to read yt-dlp binary bytes: {e}"))?;
+    fs::write(&dest, &bytes)
+        .map_err(|e| format!("Failed to write {}: {e}", dest.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
+    }
+
+    send_log(tx, format!("yt-dlp installed to {}", dest.display()));
+    Ok(())
+}
+
+pub fn run_tools_setup(force: bool, tx: Option<Sender<StemsEvent>>) -> Result<(), String> {
+    let ffmpeg_found = get_ffmpeg_path();
+    let ffprobe_found = get_ffprobe_path();
+    let ytdlp_found = get_ytdlp_path();
+
+    send_log(&tx, "--- Dependency Status ---");
+    send_log(
+        &tx,
+        format!(
+            "FFmpeg:  {}",
+            ffmpeg_found
+                .as_ref()
+                .map(|p| format!("Found at {}", p.display()))
+                .unwrap_or_else(|| "NOT FOUND".to_owned())
+        ),
+    );
+    send_log(
+        &tx,
+        format!(
+            "FFprobe: {}",
+            ffprobe_found
+                .as_ref()
+                .map(|p| format!("Found at {}", p.display()))
+                .unwrap_or_else(|| "NOT FOUND".to_owned())
+        ),
+    );
+    send_log(
+        &tx,
+        format!(
+            "yt-dlp:  {}",
+            ytdlp_found
+                .as_ref()
+                .map(|p| format!("Found at {}", p.display()))
+                .unwrap_or_else(|| "NOT FOUND".to_owned())
+        ),
+    );
+    send_log(&tx, "-------------------------");
+
+    let need_ffmpeg = ffmpeg_found.is_none() || ffprobe_found.is_none() || force;
+    let need_ytdlp = ytdlp_found.is_none() || force;
+
+    if !need_ffmpeg && !need_ytdlp {
+        send_progress(&tx, 1.0, "All tools (FFmpeg, FFprobe, yt-dlp) are already installed!");
+        send_log(&tx, "All tools are already present and ready.");
+        return Ok(());
+    }
+
+    let bin_dir = local_bin_dir();
+    if need_ffmpeg {
+        download_and_extract_ffmpeg(&bin_dir, &tx)?;
+    }
+    if need_ytdlp {
+        download_ytdlp(&bin_dir, &tx)?;
+    }
+
+    send_progress(&tx, 1.0, "Tools setup complete! FFmpeg & yt-dlp are ready.");
+    send_log(&tx, "Tools setup finished: FFmpeg & yt-dlp are ready.");
+    Ok(())
+}
+
 fn configure_device_env(device: ComputeDevice) {
     // SAFETY: Called before starting ORT session creation on the worker thread.
     unsafe {
@@ -346,217 +738,221 @@ fn configure_device_env(device: ComputeDevice) {
 }
 
 pub fn process_media(job: &StemsJob, tx: Option<Sender<StemsEvent>>) -> Result<DerivedOutputs, String> {
-    let media_file = &job.source_input;
-    if !media_file.is_file() {
-        return Err(format!("Source media file not found: {}", media_file.display()));
-    }
-
     let ffmpeg_bin = get_ffmpeg_path().ok_or_else(|| {
-        "FFmpeg was not found on your system (checked ./bin and PATH). Please install FFmpeg (`winget install Gyan.FFmpeg` / `apt install ffmpeg` / `brew install ffmpeg`).".to_owned()
+        "FFmpeg was not found on your system (checked ./bin and PATH). Click 'Download / Setup Tools' to install FFmpeg & yt-dlp automatically.".to_owned()
     })?;
 
     fs::create_dir_all(&job.output_dir)
         .map_err(|e| format!("Failed to create output directory: {e}"))?;
 
-    let base_name = media_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("song");
-    let is_video = has_video_stream(media_file);
-    let derived = derive_output_paths(&job.output_dir, base_name, is_video);
-
-    send_log(
-        &tx,
-        format!(
-            "Processing media: {} ({})",
-            media_file
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("input"),
-            if is_video { "video+audio" } else { "audio-only" }
-        ),
-    );
-    send_progress(&tx, 0.02, "Preparing media pipeline…");
-
     let temp_dir = env::temp_dir().join(format!("usc_stems_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
-    let result = std::thread::scope(|s| -> Result<DerivedOutputs, String> {
-        let tx_vid = tx.clone();
-        let ffmpeg_vid = ffmpeg_bin.clone();
-        let derived_mp4 = derived.muted_mp4.clone();
-        let preset = job.preset;
+    let result = (|| -> Result<DerivedOutputs, String> {
+        send_progress(&tx, 0.02, "Preparing media pipeline…");
+        let media_file_buf = resolve_input_media(&job.source_input, &temp_dir, &tx)?;
+        let media_file = media_file_buf.as_path();
 
-        let vid_handle = s.spawn(move || -> Result<(), String> {
-            let Some(out_mp4) = derived_mp4 else {
-                send_log(&tx_vid, "[Video] Audio-only input; skipping muted video.");
-                return Ok(());
-            };
-            send_log(
-                &tx_vid,
-                format!(
-                    "[Video] Encoding muted background video: {} ({})",
-                    out_mp4.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-                    preset.label()
-                ),
-            );
-            let args = build_ffmpeg_muted_video_args(media_file, &out_mp4, preset);
-            run_ffmpeg(&ffmpeg_vid, &args, "Muted video encoding")?;
-            send_log(
-                &tx_vid,
-                format!(
-                    "[Video] Muted video ready: {}",
-                    out_mp4.file_name().and_then(|n| n.to_str()).unwrap_or("")
-                ),
-            );
-            Ok(())
-        });
+        let base_name = media_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("song");
+        let is_video = has_video_stream(media_file);
+        let derived = derive_output_paths(&job.output_dir, base_name, is_video);
 
-        let tx_aud = tx.clone();
-        let ffmpeg_aud = ffmpeg_bin.clone();
-        let derived_aud = derived.clone();
-        let temp_aud = temp_dir.clone();
-        let device = job.device;
+        send_log(
+            &tx,
+            format!(
+                "Processing media: {} ({})",
+                media_file
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("input"),
+                if is_video { "video+audio" } else { "audio-only" }
+            ),
+        );
 
-        let aud_handle = s.spawn(move || -> Result<(), String> {
-            send_log(
-                &tx_aud,
-                format!(
-                    "[Audio] Encoding master MP3 (-q:a 0): {}",
-                    derived_aud.mp3.file_name().and_then(|n| n.to_str()).unwrap_or("")
-                ),
-            );
-            send_progress(&tx_aud, 0.05, "Encoding master MP3…");
-            let mp3_args = build_ffmpeg_mp3_args(media_file, &derived_aud.mp3);
-            run_ffmpeg(&ffmpeg_aud, &mp3_args, "Master MP3 encoding")?;
+        std::thread::scope(|s| -> Result<DerivedOutputs, String> {
+            let tx_vid = tx.clone();
+            let ffmpeg_vid = ffmpeg_bin.clone();
+            let derived_mp4 = derived.muted_mp4.clone();
+            let preset = job.preset;
 
-            let pcm_wav = temp_aud.join(format!("{base_name}_pcm44k.wav"));
-            send_log(&tx_aud, "[Audio] Extracting 44.1 kHz stereo PCM for HTDemucs…");
-            send_progress(&tx_aud, 0.10, "Extracting 44.1 kHz stereo PCM…");
-            let wav_args = build_ffmpeg_pcm_wav_args(media_file, &pcm_wav);
-            run_ffmpeg(&ffmpeg_aud, &wav_args, "PCM WAV extraction")?;
-
-            configure_device_env(device);
-
-            let tx_dl = tx_aud.clone();
-            set_download_progress_callback(move |downloaded, total| {
-                if total > 0 {
-                    let pct = downloaded as f32 / total as f32;
-                    send_progress(
-                        &tx_dl,
-                        0.10 + pct * 0.15,
-                        format!(
-                            "Downloading HTDemucs model ({:.1} / {:.1} MB)…",
-                            downloaded as f64 / 1_048_576.0,
-                            total as f64 / 1_048_576.0
-                        ),
-                    );
-                }
+            let vid_handle = s.spawn(move || -> Result<(), String> {
+                let Some(out_mp4) = derived_mp4 else {
+                    send_log(&tx_vid, "[Video] Audio-only input; skipping muted video.");
+                    return Ok(());
+                };
+                send_log(
+                    &tx_vid,
+                    format!(
+                        "[Video] Encoding muted background video: {} ({})",
+                        out_mp4.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                        preset.label()
+                    ),
+                );
+                let args = build_ffmpeg_muted_video_args(media_file, &out_mp4, preset);
+                run_ffmpeg(&ffmpeg_vid, &args, "Muted video encoding")?;
+                send_log(
+                    &tx_vid,
+                    format!(
+                        "[Video] Muted video ready: {}",
+                        out_mp4.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                    ),
+                );
+                Ok(())
             });
 
-            let tx_sp = tx_aud.clone();
-            set_split_progress_callback(move |prog| match prog {
-                SplitProgress::Stage(stage) => {
-                    send_log(&tx_sp, format!("[HTDemucs] Stage: {stage}"));
-                }
-                SplitProgress::Chunks {
-                    done,
-                    total,
-                    percent,
-                } => {
-                    let frac = 0.25 + (percent / 100.0) * 0.55;
-                    send_progress(
-                        &tx_sp,
-                        frac,
-                        format!("Separating stems: chunk {done}/{total} ({percent:.0}%)"),
-                    );
-                }
-                SplitProgress::Writing {
-                    stem,
-                    done,
-                    total,
-                    ..
-                } => {
-                    send_progress(
-                        &tx_sp,
-                        0.80 + (done as f32 / total.max(1) as f32) * 0.08,
-                        format!("Writing raw stem: {stem} ({done}/{total})"),
-                    );
-                }
-                SplitProgress::Finished => {
-                    send_log(&tx_sp, "[HTDemucs] Raw stem separation finished.");
-                }
+            let tx_aud = tx.clone();
+            let ffmpeg_aud = ffmpeg_bin.clone();
+            let derived_aud = derived.clone();
+            let temp_aud = temp_dir.clone();
+            let device = job.device;
+
+            let aud_handle = s.spawn(move || -> Result<(), String> {
+                send_log(
+                    &tx_aud,
+                    format!(
+                        "[Audio] Encoding master MP3 (-q:a 0): {}",
+                        derived_aud.mp3.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                    ),
+                );
+                send_progress(&tx_aud, 0.05, "Encoding master MP3…");
+                let mp3_args = build_ffmpeg_mp3_args(media_file, &derived_aud.mp3);
+                run_ffmpeg(&ffmpeg_aud, &mp3_args, "Master MP3 encoding")?;
+
+                let pcm_wav = temp_aud.join(format!("{base_name}_pcm44k.wav"));
+                send_log(&tx_aud, "[Audio] Extracting 44.1 kHz stereo PCM for HTDemucs…");
+                send_progress(&tx_aud, 0.10, "Extracting 44.1 kHz stereo PCM…");
+                let wav_args = build_ffmpeg_pcm_wav_args(media_file, &pcm_wav);
+                run_ffmpeg(&ffmpeg_aud, &wav_args, "PCM WAV extraction")?;
+
+                configure_device_env(device);
+
+                let tx_dl = tx_aud.clone();
+                set_download_progress_callback(move |downloaded, total| {
+                    if total > 0 {
+                        let pct = downloaded as f32 / total as f32;
+                        send_progress(
+                            &tx_dl,
+                            0.10 + pct * 0.15,
+                            format!(
+                                "Downloading HTDemucs model ({:.1} / {:.1} MB)…",
+                                downloaded as f64 / 1_048_576.0,
+                                total as f64 / 1_048_576.0
+                            ),
+                        );
+                    }
+                });
+
+                let tx_sp = tx_aud.clone();
+                set_split_progress_callback(move |prog| match prog {
+                    SplitProgress::Stage(stage) => {
+                        send_log(&tx_sp, format!("[HTDemucs] Stage: {stage}"));
+                    }
+                    SplitProgress::Chunks {
+                        done,
+                        total,
+                        percent,
+                    } => {
+                        let frac = 0.25 + (percent / 100.0) * 0.55;
+                        send_progress(
+                            &tx_sp,
+                            frac,
+                            format!("Separating stems: chunk {done}/{total} ({percent:.0}%)"),
+                        );
+                    }
+                    SplitProgress::Writing {
+                        stem,
+                        done,
+                        total,
+                        ..
+                    } => {
+                        send_progress(
+                            &tx_sp,
+                            0.80 + (done as f32 / total.max(1) as f32) * 0.08,
+                            format!("Writing raw stem: {stem} ({done}/{total})"),
+                        );
+                    }
+                    SplitProgress::Finished => {
+                        send_log(&tx_sp, "[HTDemucs] Raw stem separation finished.");
+                    }
+                });
+
+                let stems_dir = temp_aud.join("stems");
+                fs::create_dir_all(&stems_dir)
+                    .map_err(|e| format!("Failed to create stems dir: {e}"))?;
+
+                send_log(
+                    &tx_aud,
+                    format!(
+                        "[Audio] Running HTDemucs separation (device: {})…",
+                        device.label()
+                    ),
+                );
+                let split_opts = SplitOptions {
+                    output_dir: stems_dir.to_string_lossy().into_owned(),
+                    model_name: "htdemucs_ort_v1".to_owned(),
+                    manifest_url_override: None,
+                };
+                let split_res = split_file(&pcm_wav.to_string_lossy(), split_opts)
+                    .map_err(|e| format!("HTDemucs separation failed: {e}"))?;
+
+                send_progress(&tx_aud, 0.90, "Encoding Vocals & Instrumental MP3s…");
+                send_log(
+                    &tx_aud,
+                    "[Audio] Encoding [Vocals] and peak-limited [Instrumental] MP3s…",
+                );
+
+                let vocals_wav = Path::new(&split_res.vocals_path);
+                let drums_wav = Path::new(&split_res.drums_path);
+                let bass_wav = Path::new(&split_res.bass_path);
+                let other_wav = Path::new(&split_res.other_path);
+
+                let voc_args = build_ffmpeg_mp3_args(vocals_wav, &derived_aud.vocals);
+                run_ffmpeg(&ffmpeg_aud, &voc_args, "Vocals MP3 encoding")?;
+
+                let inst_args = build_ffmpeg_inst_mix_args(
+                    &[drums_wav, bass_wav, other_wav],
+                    &derived_aud.instrumental,
+                );
+                run_ffmpeg(&ffmpeg_aud, &inst_args, "Instrumental mix & MP3 encoding")?;
+
+                send_log(
+                    &tx_aud,
+                    format!(
+                        "[Audio] Stems ready: {}, {}",
+                        derived_aud
+                            .vocals
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(""),
+                        derived_aud
+                            .instrumental
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                    ),
+                );
+                Ok(())
             });
 
-            let stems_dir = temp_aud.join("stems");
-            fs::create_dir_all(&stems_dir).map_err(|e| format!("Failed to create stems dir: {e}"))?;
+            let vid_res = vid_handle
+                .join()
+                .map_err(|_| "Video worker thread panicked".to_owned())?;
+            let aud_res = aud_handle
+                .join()
+                .map_err(|_| "Audio worker thread panicked".to_owned())?;
 
-            send_log(
-                &tx_aud,
-                format!(
-                    "[Audio] Running HTDemucs separation (device: {})…",
-                    device.label()
-                ),
-            );
-            let split_opts = SplitOptions {
-                output_dir: stems_dir.to_string_lossy().into_owned(),
-                model_name: "htdemucs_ort_v1".to_owned(),
-                manifest_url_override: None,
-            };
-            let split_res = split_file(&pcm_wav.to_string_lossy(), split_opts)
-                .map_err(|e| format!("HTDemucs separation failed: {e}"))?;
+            vid_res?;
+            aud_res?;
 
-            send_progress(&tx_aud, 0.90, "Encoding Vocals & Instrumental MP3s…");
-            send_log(&tx_aud, "[Audio] Encoding [Vocals] and peak-limited [Instrumental] MP3s…");
-
-            let vocals_wav = Path::new(&split_res.vocals_path);
-            let drums_wav = Path::new(&split_res.drums_path);
-            let bass_wav = Path::new(&split_res.bass_path);
-            let other_wav = Path::new(&split_res.other_path);
-
-            let voc_args = build_ffmpeg_mp3_args(vocals_wav, &derived_aud.vocals);
-            run_ffmpeg(&ffmpeg_aud, &voc_args, "Vocals MP3 encoding")?;
-
-            let inst_args = build_ffmpeg_inst_mix_args(
-                &[drums_wav, bass_wav, other_wav],
-                &derived_aud.instrumental,
-            );
-            run_ffmpeg(&ffmpeg_aud, &inst_args, "Instrumental mix & MP3 encoding")?;
-
-            send_log(
-                &tx_aud,
-                format!(
-                    "[Audio] Stems ready: {}, {}",
-                    derived_aud
-                        .vocals
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(""),
-                    derived_aud
-                        .instrumental
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                ),
-            );
-            Ok(())
-        });
-
-        let vid_res = vid_handle
-            .join()
-            .map_err(|_| "Video worker thread panicked".to_owned())?;
-        let aud_res = aud_handle
-            .join()
-            .map_err(|_| "Audio worker thread panicked".to_owned())?;
-
-        vid_res?;
-        aud_res?;
-
-        send_progress(&tx, 1.0, "Media & stem preparation complete!");
-        send_log(&tx, "Media & stem preparation complete!");
-        Ok(derived)
-    });
+            send_progress(&tx, 1.0, "Media & stem preparation complete!");
+            send_log(&tx, "Media & stem preparation complete!");
+            Ok(derived)
+        })
+    })();
 
     let _ = fs::remove_dir_all(&temp_dir);
     result
@@ -583,11 +979,27 @@ mod tests {
     }
 
     #[test]
-    fn video_extension_classification() {
+    fn video_extension_and_url_detection() {
         assert_eq!(is_video_extension(Path::new("clip.mp4")), Some(true));
         assert_eq!(is_video_extension(Path::new("clip.MKV")), Some(true));
         assert_eq!(is_video_extension(Path::new("track.flac")), Some(false));
         assert_eq!(is_video_extension(Path::new("track.MP3")), Some(false));
+
+        assert!(is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+        assert!(is_url("  HTTP://example.com/video.mp4 "));
+        assert!(!is_url("C:\\Music\\song.mp4"));
+    }
+
+    #[test]
+    fn ytdlp_args_include_ffmpeg_location_and_mp4_merge() {
+        let ff = Path::new("/opt/usc/bin/ffmpeg");
+        let out = Path::new("/tmp/dl");
+        let args = build_ytdlp_args(Some(ff), "https://youtu.be/abc", out);
+        assert!(args.contains(&"--no-playlist".to_owned()));
+        assert!(args.contains(&"bv*+ba/b".to_owned()));
+        assert!(args.contains(&"mp4".to_owned()));
+        assert!(args.windows(2).any(|w| w == ["--ffmpeg-location", "/opt/usc/bin"]));
+        assert_eq!(args.last().map(String::as_str), Some("https://youtu.be/abc"));
     }
 
     #[test]
