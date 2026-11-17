@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arboard = "3"
 eframe = "0.33"
 libloading = "0.8"
 lofty = "0.22"
