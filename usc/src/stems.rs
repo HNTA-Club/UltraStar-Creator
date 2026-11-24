@@ -1294,7 +1294,7 @@ mod tests {
         assert_eq!(is_video_extension(Path::new("track.flac")), Some(false));
         assert_eq!(is_video_extension(Path::new("track.MP3")), Some(false));
 
-        assert!(is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+        assert!(is_url("https://example.com/watch?v=sample123"));
         assert!(is_url("  HTTP://example.com/video.mp4 "));
         assert!(!is_url("C:\\Music\\song.mp4"));
     }
@@ -1303,12 +1303,12 @@ mod tests {
     fn ytdlp_args_include_ffmpeg_location_and_mp4_merge() {
         let ff = Path::new("/opt/usc/bin/ffmpeg");
         let out = Path::new("/tmp/dl");
-        let args = build_ytdlp_args(Some(ff), "https://youtu.be/abc", out);
+        let args = build_ytdlp_args(Some(ff), "https://example.com/media/abc", out);
         assert!(args.contains(&"--no-playlist".to_owned()));
         assert!(args.contains(&"bv*+ba/b".to_owned()));
         assert!(args.contains(&"mp4".to_owned()));
         assert!(args.windows(2).any(|w| w == ["--ffmpeg-location", "/opt/usc/bin"]));
-        assert_eq!(args.last().map(String::as_str), Some("https://youtu.be/abc"));
+        assert_eq!(args.last().map(String::as_str), Some("https://example.com/media/abc"));
     }
 
     #[test]

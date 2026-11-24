@@ -1,3 +1,4 @@
+pub mod about;
 pub mod header;
 pub mod lyrics;
 pub mod tap;
@@ -10,6 +11,7 @@ use std::time::Duration;
 
 use eframe::egui;
 
+use crate::app::about::AboutTopic;
 use crate::audio::AudioEngine;
 use crate::lyrics::{Role, clean, syllabify, syllables};
 use crate::media::{
@@ -160,6 +162,7 @@ pub struct UscApp {
     finish_modal: Option<FinishModal>,
     pending_image: Option<PendingDroppedImage>,
     stems_modal: StemsModalState,
+    about_modal: Option<AboutTopic>,
 }
 
 impl UscApp {
@@ -229,6 +232,7 @@ impl UscApp {
             finish_modal: None,
             pending_image: None,
             stems_modal: StemsModalState::default(),
+            about_modal: None,
         };
 
         if let Some(path) = initial_audio {
@@ -935,7 +939,7 @@ impl UscApp {
         if source_input.is_empty() {
             self.stems_modal.status_line = match self.stems_modal.source_mode {
                 SourceMode::File => "Please select a local video or audio file first.".into(),
-                SourceMode::Url => "Please enter a YouTube or media URL first.".into(),
+                SourceMode::Url => "Please enter a media URL first.".into(),
             };
             return;
         }
@@ -1062,7 +1066,7 @@ impl UscApp {
             .default_width(580.0)
             .show(ctx, |ui| {
                 ui.label(
-                    "Splits local media or YouTube/web URLs into Master MP3, Muted Video (.mp4), Isolated Vocals, and Peak-Limited Instrumental using HTDemucs.",
+                    "Splits local media or supported web URLs (via yt-dlp) into Master MP3, Muted Video (.mp4), Isolated Vocals, and Peak-Limited Instrumental using HTDemucs.",
                 );
                 ui.add_space(6.0);
 
@@ -1077,7 +1081,7 @@ impl UscApp {
                         ui.radio_value(
                             &mut self.stems_modal.source_mode,
                             SourceMode::Url,
-                            "YouTube / Web URL (yt-dlp)",
+                            "Media URL (yt-dlp)",
                         );
                     });
                     ui.add_space(4.0);
@@ -1122,7 +1126,7 @@ impl UscApp {
                                     ui.label("Media URL:");
                                     ui.add(
                                         egui::TextEdit::singleline(&mut self.stems_modal.url_input)
-                                            .hint_text("https://www.youtube.com/watch?v=...")
+                                            .hint_text("https://... (any yt-dlp supported URL)")
                                             .desired_width(340.0),
                                     );
                                     if ui.button("Paste").clicked()
@@ -1215,6 +1219,11 @@ impl UscApp {
                             ui.label("");
                             ui.end_row();
                         });
+                    if self.stems_modal.source_mode == SourceMode::Url {
+                        ui.small(
+                            "Use only with media you own, have permission to use, or that is freely licensed.",
+                        );
+                    }
                 });
 
                 ui.add_space(6.0);
@@ -1537,6 +1546,8 @@ impl eframe::App for UscApp {
                         }
                     }
                 });
+
+                about::show_menu(ui, &mut self.about_modal);
             });
         });
 
@@ -1802,6 +1813,17 @@ impl eframe::App for UscApp {
                     });
                 }
             });
+        }
+
+        if self.about_modal.is_some() {
+            let bass_versions = self.audio.as_ref().ok().map(AudioEngine::versions);
+            about::show_modal(
+                ctx,
+                &mut self.about_modal,
+                bass_versions,
+                get_ffmpeg_path().is_some(),
+                get_ytdlp_path().is_some(),
+            );
         }
     }
 }
