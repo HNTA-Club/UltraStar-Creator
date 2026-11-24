@@ -264,9 +264,36 @@ pub fn get_ytdlp_path() -> Option<PathBuf> {
     find_binary("yt-dlp")
 }
 
+pub fn normalize_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(trimmed.to_owned())
+    } else if lower.starts_with("www.") {
+        Some(format!("https://{trimmed}"))
+    } else {
+        None
+    }
+}
+
+pub fn normalize_url_input(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        trimmed.to_owned()
+    } else {
+        format!("https://{trimmed}")
+    }
+}
+
 pub fn is_url(input: &str) -> bool {
-    let trimmed = input.trim().to_ascii_lowercase();
-    trimmed.starts_with("http://") || trimmed.starts_with("https://")
+    normalize_url(input).is_some()
 }
 
 pub fn is_video_extension(path: &Path) -> Option<bool> {
@@ -492,8 +519,8 @@ pub fn resolve_input_media(
     if trimmed.is_empty() {
         return Err("Source input is empty.".to_owned());
     }
-    if is_url(trimmed) {
-        return download_url_media(trimmed, temp_dir, cancel, tx);
+    if let Some(url) = normalize_url(trimmed) {
+        return download_url_media(&url, temp_dir, cancel, tx);
     }
     let path = PathBuf::from(trimmed);
     if path.is_file() {
@@ -1296,7 +1323,21 @@ mod tests {
 
         assert!(is_url("https://example.com/watch?v=sample123"));
         assert!(is_url("  HTTP://example.com/video.mp4 "));
+        assert!(is_url("www.example.com/watch?v=sample123"));
+        assert_eq!(
+            normalize_url(" www.example.com/watch?v=1 ").as_deref(),
+            Some("https://www.example.com/watch?v=1")
+        );
+        assert_eq!(
+            normalize_url_input("example.com/track"),
+            "https://example.com/track"
+        );
+        assert_eq!(
+            normalize_url_input("http://example.com/track"),
+            "http://example.com/track"
+        );
         assert!(!is_url("C:\\Music\\song.mp4"));
+        assert!(!is_url("clip.mp4"));
     }
 
     #[test]

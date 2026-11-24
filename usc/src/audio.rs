@@ -75,13 +75,23 @@ impl BassLibs {
         let fx_name = lib_filename("bass_fx");
 
         let mut dirs: Vec<PathBuf> = Vec::new();
+        let platform_dir = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
         if let Ok(exe) = std::env::current_exe()
             && let Some(exe_dir) = exe.parent()
         {
             dirs.push(exe_dir.to_path_buf());
             dirs.push(exe_dir.join("lib"));
+            dirs.push(exe_dir.join("../../../lib").join(platform_dir));
         }
         dirs.push(PathBuf::from("."));
+        dirs.push(PathBuf::from("lib").join(platform_dir));
+        dirs.push(PathBuf::from("../lib").join(platform_dir));
 
         for dir in &dirs {
             let bass_path = dir.join(&bass_name);

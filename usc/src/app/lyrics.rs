@@ -189,7 +189,7 @@ pub fn show(
     ui.separator();
 
     // Lyrics toolbar
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.add_enabled_ui(!locked, |ui| {
             if ui.button("Open .txt...").clicked() {
                 actions.open_file = true;
@@ -197,11 +197,18 @@ pub fn show(
             if ui.button("Paste").clicked() {
                 actions.paste = true;
             }
-            if ui.button("Syllabify").clicked() {
+            ui.separator();
+            if ui
+                .button("Split Syllables")
+                .on_hover_text(
+                    "Split lyrics into syllables using Song Language (Japanese/Romaji mora splitter for Japanese, dictionary for other languages)",
+                )
+                .clicked()
+            {
                 actions.syllabify = true;
             }
-            ui.menu_button("JP Romaji ▾", |ui| {
-                ui.label(egui::RichText::new("Japanese Mora Romanizer").strong());
+            ui.menu_button("Options ▾", |ui| {
+                ui.label(egui::RichText::new("Japanese / Romaji Split Options").strong());
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Split char:");
@@ -245,18 +252,26 @@ pub fn show(
                 );
                 ui.checkbox(&mut romaji_cfg.strict_mora, "Strict mora (split ー)");
                 ui.separator();
-                if ui.button("Split Japanese / Romaji Now").clicked() {
+                if ui
+                    .button("Split as Japanese / Romaji")
+                    .on_hover_text(
+                        "Force Japanese / Romaji mora splitting even if Song Language isn't set to Japanese yet",
+                    )
+                    .clicked()
+                {
                     actions.split_jp_romaji = true;
                     ui.close();
                 }
             });
         });
-        if ui.button("A-").clicked() {
-            *font_size = (*font_size - 1.0).max(8.0);
-        }
-        if ui.button("A+").clicked() {
-            *font_size = (*font_size + 1.0).min(24.0);
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("A+").clicked() {
+                *font_size = (*font_size + 1.0).min(24.0);
+            }
+            if ui.button("A-").clicked() {
+                *font_size = (*font_size - 1.0).max(8.0);
+            }
+        });
     });
 
     if is_duet {

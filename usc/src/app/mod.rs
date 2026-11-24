@@ -22,7 +22,7 @@ use crate::romaji::{RomajiConfig, contains_japanese, convert_text_with_romaji};
 use crate::song::{Header, render};
 use crate::stems::{
     ComputeDevice, SourceMode, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, get_ytdlp_path,
-    process_media, resolve_base_name, run_tools_setup,
+    normalize_url_input, process_media, resolve_base_name, run_tools_setup,
 };
 use crate::tapping::{Filter, Note, Session};
 
@@ -167,6 +167,7 @@ pub struct UscApp {
 
 impl UscApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_audio: Option<PathBuf>) -> Self {
+        configure_cjk_fallback_font(&cc.egui_ctx);
         let storage = cc.storage;
         let theme = storage
             .and_then(|s| s.get_string("theme"))
@@ -938,7 +939,7 @@ impl UscApp {
         }
         let source_input = match self.stems_modal.source_mode {
             SourceMode::File => self.stems_modal.file_path.trim().to_owned(),
-            SourceMode::Url => self.stems_modal.url_input.trim().to_owned(),
+            SourceMode::Url => normalize_url_input(&self.stems_modal.url_input),
         };
         if source_input.is_empty() {
             self.stems_modal.status_line = match self.stems_modal.source_mode {
@@ -1831,6 +1832,67 @@ impl eframe::App for UscApp {
                 get_ffmpeg_path().is_some(),
                 get_ytdlp_path().is_some(),
             );
+        }
+    }
+}
+
+fn configure_cjk_fallback_font(ctx: &egui::Context) {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        let fonts_dir = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+            .join("Fonts");
+        for name in [
+            "meiryo.ttc",
+            "YuGothM.ttc",
+            "YuGothR.ttc",
+            "msgothic.ttc",
+            "msyh.ttc",
+        ] {
+            candidates.push(fonts_dir.join(name));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        for p in [
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        ] {
+            candidates.push(PathBuf::from(p));
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for p in [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf",
+            "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
+            "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        ] {
+            candidates.push(PathBuf::from(p));
+        }
+    }
+
+    for path in candidates {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts
+                .font_data
+                .insert("cjk_fallback".into(), Arc::new(egui::FontData::from_owned(bytes)));
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push("cjk_fallback".into());
+            }
+            ctx.set_fonts(fonts);
+            break;
         }
     }
 }
