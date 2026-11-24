@@ -154,10 +154,6 @@ impl Session {
         self.pressed.is_some()
     }
 
-    pub fn press_start_ms(&self) -> Option<f64> {
-        self.pressed
-    }
-
     pub fn next_syllable(&self) -> Option<usize> {
         self.queue.get(self.pos + 1).copied()
     }
