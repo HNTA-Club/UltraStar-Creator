@@ -142,13 +142,13 @@ fn show_htdemucs_about(ui: &mut egui::Ui) {
     );
     ui.add_space(6.0);
     ui.label("Model weights are fetched on first separation run and cached locally.");
-    ui.label("License: MIT License (Demucs & stem-splitter-core)");
+    ui.label("License: MIT (Demucs) / MIT or Apache-2.0 (stem-splitter-core)");
     ui.horizontal_wrapped(|ui| {
         ui.hyperlink_to("Demucs (Meta Research)", "https://github.com/facebookresearch/demucs");
         ui.label("•");
         ui.hyperlink_to(
             "stem-splitter-core",
-            "https://github.com/stem-splitter/stem-splitter-core",
+            "https://github.com/gentij/stem-splitter-core",
         );
     });
 }

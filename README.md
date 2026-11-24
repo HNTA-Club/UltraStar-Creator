@@ -102,7 +102,7 @@ cp libcld2.dylib ../../../lib/macx
 ### 6. Third-Party Components & Licenses
 
 - **[BASS Audio Library & BASS_FX](https://www.un4seen.com/bass.html)** — Proprietary license, **free for non-commercial use only** (Un4seen Developments Ltd.). Handles audio decoding, playback, BPM detection, and pitch-preserved tempo control.
-- **[HTDemucs](https://github.com/facebookresearch/demucs) (via [stem-splitter-core](https://github.com/stem-splitter/stem-splitter-core) & ONNX Runtime)** — MIT License. Runs locally to separate audio into Vocals and Instrumental stems; model weights are downloaded on first use and cached locally.
+- **[HTDemucs](https://github.com/facebookresearch/demucs) (via [stem-splitter-core](https://github.com/gentij/stem-splitter-core) & ONNX Runtime)** — MIT License (Demucs) / MIT or Apache-2.0 (`stem-splitter-core`). Runs locally to separate audio into Vocals and Instrumental stems; model weights are downloaded on first use and cached locally.
 - **[FFmpeg / FFprobe](https://ffmpeg.org)** — LGPL v2.1+ / GPL v2+ (depending on build). Used for audio extraction, muted `.mp4` video encoding, and peak-limited instrumental MP3 output. Not bundled in release archives; resolved from `PATH` or downloaded on demand via the in-app **Check / Download Tools** button.
 - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — The Unlicense (Public Domain). Optional external media fetcher supporting 1,000+ web platforms and direct media URLs. Not bundled in release archives; resolved from `PATH` or downloaded on demand via **Check / Download Tools**. Only use it with media you own, have permission to download, or that is freely licensed — users are responsible for respecting copyright and applicable site Terms of Service.
 
