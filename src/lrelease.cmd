@@ -1,1 +1,0 @@
-lrelease usc.pro

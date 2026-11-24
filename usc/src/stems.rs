@@ -824,6 +824,7 @@ fn split_file_cancellable(
     })
 }
 
+#[cfg(not(target_os = "macos"))]
 fn copy_found_binary_recursive(dir: &Path, file_name: &str, dest: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
@@ -851,6 +852,17 @@ fn copy_found_binary_recursive(dir: &Path, file_name: &str, dest: &Path) -> bool
     false
 }
 
+#[cfg(target_os = "macos")]
+pub fn download_and_extract_ffmpeg(
+    target_bin_dir: &Path,
+    cancel: &AtomicBool,
+    tx: &Option<Sender<StemsEvent>>,
+) -> Result<(), String> {
+    let _ = (target_bin_dir, cancel, tx);
+    Err("On macOS, please install FFmpeg via Homebrew: `brew install ffmpeg`".to_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn download_and_extract_ffmpeg(
     target_bin_dir: &Path,
     cancel: &AtomicBool,
@@ -862,12 +874,8 @@ pub fn download_and_extract_ffmpeg(
 
     let url = if cfg!(target_os = "windows") {
         "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-    } else if cfg!(target_os = "linux") {
-        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
     } else {
-        return Err(
-            "On macOS, please install FFmpeg via Homebrew: `brew install ffmpeg`".to_owned(),
-        );
+        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
     };
 
     send_log(tx, format!("Downloading official FFmpeg static build from {url}…"));

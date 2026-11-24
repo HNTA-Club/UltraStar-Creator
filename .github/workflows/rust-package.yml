@@ -1,6 +1,7 @@
 name: Rust Package
 on:
   push:
+    branches: [develop, master]
     tags: ['v*']
   workflow_dispatch:
 
@@ -13,6 +14,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -80,7 +84,7 @@ jobs:
           cp bass-tmp/libbass.dylib "$APP/Contents/MacOS/"
           cp fx-tmp/libbass_fx.dylib "$APP/Contents/MacOS/"
           cp syllabification/*.txt "$APP/Contents/Resources/"
-          cp src/resources/UltraStar-Creator.icns "$APP/Contents/Resources/"
+          cp setup/macos/UltraStar-Creator.icns "$APP/Contents/Resources/"
           printf '%s\n' \
             '<?xml version="1.0" encoding="UTF-8"?>' \
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -101,3 +105,26 @@ jobs:
           name: ${{ matrix.os }}-UltraStar-Creator-portable
           path: "*-UltraStar-Creator-portable.*"
           if-no-files-found: error
+
+  draft_release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    name: Draft GitHub Release
+    needs: [package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged archives
+        uses: actions/download-artifact@v6
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create Draft Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "release-artifacts/*"
+          draft: true
+          generateReleaseNotes: true
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true

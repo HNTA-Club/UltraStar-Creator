@@ -1,13 +1,12 @@
-# UltraStar-Creator Development README
+# UltraStar-Creator
 
-[![Build](https://github.com/UltraStar-Deluxe/UltraStar-Creator/actions/workflows/main.yml/badge.svg)](https://github.com/UltraStar-Deluxe/UltraStar-Creator/actions/workflows/main.yml)
+[![Rust CI](https://github.com/HNTA-Club/UltraStar-Creator/actions/workflows/rust.yml/badge.svg)](https://github.com/HNTA-Club/UltraStar-Creator/actions/workflows/rust.yml)
 [![License](https://img.shields.io/badge/license-GPLv2-blue.svg)](LICENSE)
 
-![UltraStar-Creator Logo](https://github.com/UltraStar-Deluxe/UltraStar-Creator/blob/master/src/resources/icons/UltraStar-Creator128.png)
-
+![UltraStar-Creator Logo](setup/UltraStar-Creator128.png)
 
 ### 1. About
-UltraStar-Creator (usc) is a free and open source song creation tool using Qt. It should be compilable and runnable on Windows, Linux and Mac OS.
+UltraStar-Creator (`usc`) is a free and open-source karaoke song creation tool written in Rust with `egui` / `eframe`, running natively on Windows, Linux, and macOS. Beyond classic real-time syllable tapping and duet support, this fork includes local AI stem separation (HTDemucs), Japanese & Hepburn Romaji mora splitting, drag-and-drop `[CO].jpg` / `[BG].jpg` artwork conversion, and optional external media fetching via `yt-dlp`.
 
 ### 2. Releases & Versioning
 This repository is an enhanced distribution of UltraStar-Creator maintained by **HNTA-Club**.
@@ -17,10 +16,10 @@ Releases follow [Semantic Versioning](https://semver.org/) extended with a fork 
 ```text
 v<upstream-base>-takai.<patch>
 ```
-Example: **`v1.4.0-takai.1`**
-- **Upstream Base (`1.4.0`)**: Tracks the modern Qt 6 port and unreleased improvements from upstream master, plus substantial feature additions.
+Example: **`v1.5.0-takai.1`**
+- **Upstream Base (`1.5.0`)**: Tracks upstream UltraStar-Creator milestones plus the native Rust rewrite.
 - **Fork Suffix (`-takai.<patch>`)**: Identifies releases specific to this distribution. This ensures version tags never collide with upstream tags and clearly indicates the build origin to end users.
-- **Automated CI/CD**: Pushing a version tag triggers GitHub Actions to compile and package standalone binaries across Windows (installer & portable zip), macOS (Apple Silicon & Intel DMGs), and Linux (AppImage), published to [GitHub Releases](https://github.com/HNTA-Club/UltraStar-Creator/releases).
+- **Automated CI/CD**: Pushing a `v*` version tag triggers GitHub Actions to build, test, verify, and package standalone portable archives across Windows, Linux, and macOS (`.zip` / `.tar.gz` / `.app`) and draft a release on [GitHub Releases](https://github.com/HNTA-Club/UltraStar-Creator/releases).
 
 ### 3. Controls & Hotkeys
 
@@ -38,66 +37,36 @@ Example: **`v1.4.0-takai.1`**
 | <kbd>Ctrl+Q</kbd> | **Exit** | Quits the application. |
 
 ### 4. Command-Line Parameters
-(under construction)
+- `usc <audio-file>`: Launches UltraStar-Creator with `<audio-file>` preloaded.
+- `usc --check-bass`: Verifies that `BASS` and `BASS_FX` native libraries load cleanly and prints their versions.
 
 ### 5. Build and Run
-#### Compiling on Windows (MSVC)
 
-Note: you might have to setup the MSVC commandline environment before building.
-1. Install Qt6. We recommend Qt 6.5
-2. Build taglib. From command line (in repository root):
-```
-git clone --recurse-submodules https://github.com/taglib/taglib.git
-cd taglib
-cmake -B build -G "Visual Studio 17 2022" -A x64 -DWITH_ZLIB=OFF -DBUILD_SHARED_LIBS=ON -DENABLE_STATIC_RUNTIME=OFF -DBUILD_TESTING=OFF
-msbuild build/install.vcxproj -p:Configuration=Release
-cp -r "C:/Program Files/taglib/include/taglib" ../include
-copy build/taglib/Release/tag.dll ../lib/win64
-copy build/taglib/Release/tag.lib ../lib/win64
-```
-3. Build cld2. Make sure you cloned with submodules included. From command line (in repository root):
-```
-cd include/cld2/internal
-cl /TP /GR /EHsc /c /MD cldutil.cc cldutil_shared.cc compact_lang_det.cc compact_lang_det_hint_code.cc compact_lang_det_impl.cc  debug.cc fixunicodevalue.cc generated_entities.cc  generated_language.cc generated_ulscript.cc getonescriptspan.cc lang_script.cc offsetmap.cc  scoreonescriptspan.cc tote.cc utf8statetable.cc cld_generated_cjk_uni_prop_80.cc cld2_generated_cjk_compatible.cc cld_generated_cjk_delta_bi_32.cc generated_distinct_bi_0.cc cld2_generated_quad0122.cc cld2_generated_deltaocta0122.cc cld2_generated_distinctocta0122.cc cld_generated_score_quad_octa_0122.cc
-link /dll /out:cld2.dll *.obj
-lib /out:cld2.lib *.obj
-copy .\cld2.lib ..\..\..\lib\win64
-copy .\cld2.dll ..\..\..\lib\win64
-```
-4. Build UltraStar-Creator
-   * from command line: `cd src && qmake6 UltraStar-Creator.pro -spec win32-msvc && nmake` 
-   * using Qt Creator: open `src\UltraStar-Creator.pro` in Qt Creator, disable shadow build in Project tab, then build (CTRL+B)
-5. Run `UltraStar-Creator.exe` in `bin\releease` and start creating new songs!
+#### Prerequisites
+1. **Rust stable toolchain** (`cargo` + `clippy`, e.g. via [rustup](https://rustup.rs/)).
+2. **BASS & BASS_FX shared libraries** placed in `lib/<windows|linux|macos>/` (or next to the compiled executable):
+   - Windows: `bass.dll`, `bass_fx.dll`
+   - Linux: `libbass.so`, `libbass_fx.so`
+   - macOS: `libbass.dylib`, `libbass_fx.dylib`
+3. **Linux system development packages** (Ubuntu / Debian example):
+   ```bash
+   sudo apt-get install -y pkg-config libssl-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev
+   ```
 
-#### Compiling on Linux
-These are example instructions for Ubuntu. Package names may have to be adapted for your distribution.
-
-1. Install Qt6. We recommend Qt 6.5
-2. Install dependencies: `sudo apt-get install libgl1-mesa-dev build-essential libtag1-dev libcld2-dev libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb-dev libxkbcommon-x11-0 libxcb-cursor0 libgtk2.0-dev libfuse2`
-3. Build UltraStar-Creator. From repository root:
-   * via command line (from repository root): `cd src && qmake6 UltraStar-Creator.pro && make` 
-   * using Qt Creator: open `src/UltraStar-Creator.pro` in Qt Creator, disable shadow build in Project tab, then build (CTRL+B)
-4. Run `UltraStar-Creator` in `bin/release` and start creating new songs!
-
-#### Compiling on Mac OS X
-We support both x86 (Intel) and ARM (M1/M2) Macs.
-
-1. Install homebrew via `/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"`
-2. Install the Qt framework via `brew install qt`.
-3. Install external dependencies via `brew install taglib`
-4. Build cld2. Make sure you cloned with submodules included. From command line (in repository root):
+#### Test, Lint & Build
+From the repository root:
+```bash
+cd usc
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release
 ```
-cd include
-patch cld2/internal/compile_libs.sh cld2-mac-compile.patch
-cd cld2/internal/
-export CFLAGS="-Wno-narrowing -O3"
-./compile_libs.sh
-cp libcld2.dylib ../../../lib/macx
+On Windows, if `ort-sys` needs target build subdirectories before the very first build, ensure `usc/target/{debug,release}/build/{examples,deps}` exist.
+
+To run locally in development mode (automatically picks up `lib/<os>/` and `syllabification/*.txt`):
+```bash
+cargo run --release
 ```
-5. Build UltraStar-Creator
-   * from command line: `cd src && qmake UltraStar-Creator.pro && make` 
-   * using Qt Creator: open `src/UltraStar-Creator.pro` in Qt Creator, disable shadow build in Project tab, then build (CTRL+B)
-6. Run `UltraStar-Creator.app` in `bin/release` and start creating new songs!
 
 ### 6. Third-Party Components & Licenses
 
@@ -107,4 +76,4 @@ cp libcld2.dylib ../../../lib/macx
 - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — The Unlicense (Public Domain). Optional external media fetcher supporting 1,000+ web platforms and direct media URLs. Not bundled in release archives; resolved from `PATH` or downloaded on demand via **Check / Download Tools**. Only use it with media you own, have permission to download, or that is freely licensed — users are responsible for respecting copyright and applicable site Terms of Service.
 
 ### 7. Contribute
-Feel free to fork this project, modify it to your hearts content and maybe also do pull requests to this repository for additional features, improvements or clean-ups.
+Feel free to fork this project, modify it to your heart's content, and open pull requests to this repository for additional features, improvements, or clean-ups.

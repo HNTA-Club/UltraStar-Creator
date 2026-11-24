@@ -2,9 +2,9 @@ name: Rust
 on:
   push:
     branches: ['**']
-    paths: ['usc/**', '.github/workflows/rust.yml']
+    paths: ['usc/**', 'syllabification/**', 'setup/**', '.github/workflows/rust.yml']
   pull_request:
-    paths: ['usc/**', '.github/workflows/rust.yml']
+    paths: ['usc/**', 'syllabification/**', 'setup/**', '.github/workflows/rust.yml']
 
 jobs:
   test:
@@ -18,6 +18,9 @@ jobs:
         working-directory: usc
     steps:
       - uses: actions/checkout@v6
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
