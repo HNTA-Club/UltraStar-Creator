@@ -127,6 +127,7 @@ pub struct LyricsActions {
     pub open_file: bool,
     pub paste: bool,
     pub syllabify: bool,
+    pub split_jp_romaji: bool,
     pub preview_toggle: bool,
     pub preview_seek_s: Option<f64>,
     pub text_changed: bool,
@@ -244,8 +245,8 @@ pub fn show(
                 );
                 ui.checkbox(&mut romaji_cfg.strict_mora, "Strict mora (split ー)");
                 ui.separator();
-                if ui.button("Romanize Japanese Lyrics Now").clicked() {
-                    actions.syllabify = true;
+                if ui.button("Split Japanese / Romaji Now").clicked() {
+                    actions.split_jp_romaji = true;
                     ui.close();
                 }
             });

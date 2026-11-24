@@ -103,6 +103,10 @@ pub fn syllables(text: &str, duet: bool) -> Vec<Syllable> {
 }
 
 pub fn syllabify(text: &str, dictionary: &str) -> String {
+    syllabify_with_sep(text, dictionary, '•')
+}
+
+pub fn syllabify_with_sep(text: &str, dictionary: &str, sep: char) -> String {
     let mut dict: HashMap<String, &str> = HashMap::new();
     for line in dictionary.lines() {
         let entry = line.trim();
@@ -118,13 +122,13 @@ pub fn syllabify(text: &str, dictionary: &str) -> String {
 
     for ch in text.chars() {
         if is_word_delim(ch) {
-            flush_word(&mut word, &dict, &mut out);
+            flush_word(&mut word, &dict, sep, &mut out);
             out.push(ch);
         } else {
             word.push(ch);
         }
     }
-    flush_word(&mut word, &dict, &mut out);
+    flush_word(&mut word, &dict, sep, &mut out);
     out
 }
 
@@ -132,19 +136,28 @@ fn is_word_delim(c: char) -> bool {
     matches!(c, ' ' | '\n' | ',' | '!' | '.' | '?' | '(' | ')' | ';' | ':' | '-')
 }
 
-fn flush_word(word: &mut String, dict: &HashMap<String, &str>, out: &mut String) {
+fn flush_word(word: &mut String, dict: &HashMap<String, &str>, sep: char, out: &mut String) {
     if word.is_empty() {
         return;
     }
     if let Some(&entry) = dict.get(&word.to_lowercase()) {
+        let append_tail = |s: &str, buf: &mut String| {
+            if sep == '•' {
+                buf.push_str(s);
+            } else {
+                for ch in s.chars() {
+                    buf.push(if ch == '•' { sep } else { ch });
+                }
+            }
+        };
         let mut entry_chars = entry.chars();
         if word.chars().next().is_some_and(char::is_uppercase) {
             if let Some(first) = entry_chars.next() {
                 out.extend(first.to_uppercase());
             }
-            out.push_str(entry_chars.as_str());
+            append_tail(entry_chars.as_str(), out);
         } else {
-            out.push_str(entry);
+            append_tail(entry, out);
         }
     } else {
         out.push_str(word);
@@ -258,5 +271,9 @@ mod tests {
     #[test]
     fn syllabify_leaves_unknown_and_presplit_words() {
         assert_eq!(syllabify("Hel•lo zzz\n", "hel•lo"), "Hel•lo zzz\n");
+        assert_eq!(
+            syllabify_with_sep("Never Hel+lo", "ne•ver\nhel•lo", '+'),
+            "Ne+ver Hel+lo"
+        );
     }
 }

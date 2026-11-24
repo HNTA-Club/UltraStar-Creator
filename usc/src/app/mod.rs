@@ -13,12 +13,12 @@ use eframe::egui;
 
 use crate::app::about::AboutTopic;
 use crate::audio::AudioEngine;
-use crate::lyrics::{Role, clean, syllabify, syllables};
+use crate::lyrics::{Role, clean, syllabify, syllabify_with_sep, syllables};
 use crate::media::{
     FolderMedia, ImageSlot, detect_language, dictionaries_dir, is_near_square, read_tags,
     save_image_as_slot, scan_folder,
 };
-use crate::romaji::{RomajiConfig, contains_japanese, convert_text};
+use crate::romaji::{RomajiConfig, contains_japanese, convert_text_with_romaji};
 use crate::song::{Header, render};
 use crate::stems::{
     ComputeDevice, SourceMode, StemsEvent, StemsJob, VideoPreset, get_ffmpeg_path, get_ytdlp_path,
@@ -446,54 +446,58 @@ impl UscApp {
         }
     }
 
+    fn split_japanese_or_romaji(&mut self) {
+        if self.header.language.trim().is_empty() {
+            self.header.language = "Japanese".into();
+        }
+
+        let mut used_en_dict = false;
+        let mut text = self.lyrics_text.clone();
+        if let Some(dir) = dictionaries_dir()
+            && let Ok(dict) = std::fs::read_to_string(dir.join("English.txt"))
+        {
+            text = syllabify_with_sep(&text, &dict, self.romaji_cfg.split_char);
+            used_en_dict = true;
+        }
+
+        self.lyrics_text = convert_text_with_romaji(&text, &self.romaji_cfg);
+        self.invalidate_session();
+        self.status = if used_en_dict {
+            "Split Japanese / Romaji morae (+ English.txt).".into()
+        } else {
+            "Split Japanese / Romaji morae.".into()
+        };
+    }
+
     fn syllabify_current(&mut self) {
-        let mut did_japanese = false;
-        if contains_japanese(&self.lyrics_text) {
-            self.lyrics_text = convert_text(&self.lyrics_text, &self.romaji_cfg);
-            if self.header.language.trim().is_empty() {
-                self.header.language = "Japanese".into();
-            }
-            did_japanese = true;
+        if contains_japanese(&self.lyrics_text)
+            || self.header.language.trim().eq_ignore_ascii_case("Japanese")
+        {
+            self.split_japanese_or_romaji();
+            return;
         }
 
         if self.header.language.trim().is_empty() {
             if let Some(lang) = detect_language(&self.lyrics_text) {
                 self.header.language = lang.to_string();
-            } else if !did_japanese {
+            } else {
                 self.status = "Select a song Language first to syllabify.".into();
                 return;
             }
         }
 
+        let dict_lang = self.header.language.trim().to_owned();
         if let Some(dir) = dictionaries_dir() {
-            let dict_lang = if did_japanese && self.header.language.trim() == "Japanese" {
-                "English".to_owned()
-            } else {
-                self.header.language.trim().to_owned()
-            };
             let dict_path = dir.join(format!("{dict_lang}.txt"));
             if let Ok(dict) = std::fs::read_to_string(&dict_path) {
                 self.lyrics_text = syllabify(&self.lyrics_text, &dict);
                 self.invalidate_session();
-                if did_japanese {
-                    self.status =
-                        format!("Romanized Japanese morae & syllabified ({dict_lang}.txt).");
-                } else {
-                    self.status = format!("Syllabified using {dict_lang}.txt.");
-                }
+                self.status = format!("Syllabified using {dict_lang}.txt.");
                 return;
             }
         }
 
-        if did_japanese {
-            self.invalidate_session();
-            self.status = "Romanized & mora-split Japanese lyrics.".into();
-        } else {
-            self.status = format!(
-                "No syllabification dictionary for '{}'.",
-                self.header.language.trim()
-            );
-        }
+        self.status = format!("No syllabification dictionary for '{dict_lang}'.");
     }
 
     fn toggle_play_pause(&mut self) {
@@ -1719,6 +1723,9 @@ impl eframe::App for UscApp {
             }
             if act.syllabify {
                 self.syllabify_current();
+            }
+            if act.split_jp_romaji {
+                self.split_japanese_or_romaji();
             }
             if act.preview_toggle {
                 self.toggle_preview();

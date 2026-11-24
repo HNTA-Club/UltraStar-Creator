@@ -619,38 +619,318 @@ pub fn split_kana_to_morae(kana_text: &str, cfg: &RomajiConfig) -> Vec<String> {
     }
 
     if cfg.merge_diphthongs && !cfg.strict_mora && morae.len() > 1 {
-        let mut merged = Vec::with_capacity(morae.len());
-        let mut m_idx = 0;
-        while m_idx < morae.len() {
-            let current = &morae[m_idx];
-            if m_idx + 1 < morae.len() && !(current.ends_with('\'') || current.ends_with('n')) {
-                let nxt = morae[m_idx + 1].as_str();
-                if let Some(last_char) = current.chars().last().and_then(|c| c.to_lowercase().next())
-                {
-                    if nxt == "i" && matches!(last_char, 'a' | 'e' | 'o' | 'u' | 'i') {
-                        merged.push(format!("{current}i"));
-                        m_idx += 2;
-                        continue;
-                    }
-                    if nxt == "u" && matches!(last_char, 'o' | 'u' | 'a') {
-                        merged.push(format!("{current}u"));
-                        m_idx += 2;
-                        continue;
-                    }
-                    if matches!(nxt, "a" | "e" | "o") && nxt.starts_with(last_char) {
-                        merged.push(format!("{current}{nxt}"));
-                        m_idx += 2;
-                        continue;
-                    }
-                }
-            }
-            merged.push(current.clone());
-            m_idx += 1;
-        }
-        morae = merged;
+        morae = merge_mora_diphthongs(morae);
     }
 
     morae
+}
+
+fn merge_mora_diphthongs(morae: Vec<String>) -> Vec<String> {
+    if morae.len() <= 1 {
+        return morae;
+    }
+    let mut merged = Vec::with_capacity(morae.len());
+    let mut m_idx = 0;
+    while m_idx < morae.len() {
+        let current = &morae[m_idx];
+        if m_idx + 1 < morae.len()
+            && !(current.ends_with('\'') || current.ends_with('n') || current.ends_with('N'))
+        {
+            let nxt = morae[m_idx + 1].as_str();
+            if let Some(last_char) = current.chars().last().map(|c| c.to_ascii_lowercase()) {
+                if nxt.eq_ignore_ascii_case("i")
+                    && matches!(last_char, 'a' | 'e' | 'o' | 'u' | 'i')
+                {
+                    merged.push(format!("{current}{nxt}"));
+                    m_idx += 2;
+                    continue;
+                }
+                if nxt.eq_ignore_ascii_case("u") && matches!(last_char, 'o' | 'u' | 'a') {
+                    merged.push(format!("{current}{nxt}"));
+                    m_idx += 2;
+                    continue;
+                }
+                if (nxt.eq_ignore_ascii_case("a")
+                    || nxt.eq_ignore_ascii_case("e")
+                    || nxt.eq_ignore_ascii_case("o"))
+                    && nxt.to_ascii_lowercase().starts_with(last_char)
+                {
+                    merged.push(format!("{current}{nxt}"));
+                    m_idx += 2;
+                    continue;
+                }
+            }
+        }
+        merged.push(current.clone());
+        m_idx += 1;
+    }
+    merged
+}
+
+fn lower_romaji_char(c: char) -> char {
+    match c {
+        'Ā' => 'ā',
+        'Ī' => 'ī',
+        'Ū' => 'ū',
+        'Ē' => 'ē',
+        'Ō' => 'ō',
+        other => other.to_ascii_lowercase(),
+    }
+}
+
+fn is_romaji_letter(c: char) -> bool {
+    c.is_ascii_alphabetic() || matches!(c, 'ā' | 'ī' | 'ū' | 'ē' | 'ō' | 'Ā' | 'Ī' | 'Ū' | 'Ē' | 'Ō')
+}
+
+fn base_vowel_preserving_case(c: char) -> Option<char> {
+    match c {
+        'ā' => Some('a'),
+        'ī' => Some('i'),
+        'ū' => Some('u'),
+        'ē' => Some('e'),
+        'ō' => Some('o'),
+        'Ā' => Some('A'),
+        'Ī' => Some('I'),
+        'Ū' => Some('U'),
+        'Ē' => Some('E'),
+        'Ō' => Some('O'),
+        _ => None,
+    }
+}
+
+fn is_lower_vowel(c: char) -> bool {
+    matches!(
+        c,
+        'a' | 'i' | 'u' | 'e' | 'o' | 'ā' | 'ī' | 'ū' | 'ē' | 'ō'
+    )
+}
+
+fn match_hepburn_onset(slice: &[char]) -> Option<usize> {
+    let matches_str = |pat: &str| -> bool {
+        let len = pat.len();
+        slice.len() > len
+            && is_lower_vowel(slice[len])
+            && slice[..len].iter().copied().eq(pat.chars())
+    };
+
+    // 4-char consonant+yoon? Look at 3-char sokuon onsets first, then 2-char, then 1-char
+    for pat in ["tch", "cch", "ssh", "tts"] {
+        if matches_str(pat) {
+            if pat == "tts" && !matches!(slice[3], 'u' | 'ū') {
+                continue;
+            }
+            return Some(3);
+        }
+    }
+
+    // Doubled consonant + yoon or doubled single consonant (strict Hepburn)
+    if slice.len() >= 3 && slice[0] == slice[1] && slice[0] != 'n' {
+        let doubled = slice[0];
+        // Doubled consonant before yoon digraph: e.g. kkya, ppyo, ggyu, jja? (jj only valid as jja/jji/jju/jjo? Hepburn usually has j + vowel)
+        if slice.len() > 3
+            && slice[2] == 'y'
+            && is_lower_vowel(slice[3])
+            && matches!(slice[3], 'a' | 'u' | 'o')
+            && matches!(doubled, 'k' | 'g' | 'p' | 'b' | 'm' | 'r')
+        {
+            return Some(3);
+        }
+        if is_lower_vowel(slice[2]) {
+            let v = slice[2];
+            let valid = match doubled {
+                'k' | 'g' | 'p' | 'b' => true,
+                's' => !matches!(v, 'i' | 'ī'),
+                't' => !matches!(v, 'i' | 'ī' | 'u' | 'ū'),
+                'd' => matches!(v, 'a' | 'e' | 'o' | 'ā' | 'ē' | 'ō'),
+                'z' => !matches!(v, 'i' | 'ī'),
+                'j' => matches!(v, 'a' | 'i' | 'u' | 'e' | 'o' | 'ā' | 'ī' | 'ū' | 'ē' | 'ō'),
+                'f' => matches!(v, 'a' | 'i' | 'u' | 'e' | 'o' | 'ā' | 'ī' | 'ū' | 'ē' | 'ō'),
+                _ => false,
+            };
+            if valid {
+                return Some(2);
+            }
+        }
+    }
+
+    // Standard Hepburn 2-char onsets (followed by vowel)
+    if slice.len() >= 3 && is_lower_vowel(slice[2]) {
+        let c0 = slice[0];
+        let c1 = slice[1];
+        let v = slice[2];
+        let valid2 = match (c0, c1) {
+            ('s', 'h') | ('c', 'h') => true,
+            ('t', 's') => matches!(v, 'u' | 'ū' | 'a' | 'i' | 'e' | 'o'),
+            ('k', 'y')
+            | ('g', 'y')
+            | ('n', 'y')
+            | ('h', 'y')
+            | ('b', 'y')
+            | ('p', 'y')
+            | ('m', 'y')
+            | ('r', 'y') => matches!(v, 'a' | 'u' | 'o' | 'ā' | 'ū' | 'ō'),
+            ('f', 'y') => matches!(v, 'u' | 'ū'),
+            ('k', 'w') => matches!(v, 'a' | 'i' | 'e' | 'o'),
+            ('g', 'w') => matches!(v, 'a'),
+            _ => false,
+        };
+        if valid2 {
+            return Some(2);
+        }
+    }
+
+    // Standard Hepburn 1-char onsets (strictly excludes si/ti/tu/hu/zi, c without h, l, q, v, x)
+    if slice.len() >= 2 && is_lower_vowel(slice[1]) {
+        let c0 = slice[0];
+        let v = slice[1];
+        let valid1 = match c0 {
+            'k' | 'g' | 'n' | 'h' | 'b' | 'p' | 'm' | 'r' | 'j' | 'f' => true,
+            's' => !matches!(v, 'i' | 'ī'),
+            't' => !matches!(v, 'i' | 'ī' | 'u' | 'ū'),
+            'd' => matches!(v, 'a' | 'e' | 'o' | 'ā' | 'ē' | 'ō'),
+            'z' => !matches!(v, 'i' | 'ī'),
+            'y' => matches!(v, 'a' | 'u' | 'e' | 'o' | 'ā' | 'ū' | 'ē' | 'ō'),
+            'w' => matches!(v, 'a' | 'i' | 'e' | 'o' | 'ā' | 'ē' | 'ō'),
+            _ => false,
+        };
+        if valid1 {
+            return Some(1);
+        }
+    }
+
+    None
+}
+
+pub fn split_romaji_word_to_morae(word: &str, cfg: &RomajiConfig) -> Option<Vec<String>> {
+    if word.is_empty() || word.contains('•') || word.contains('+') {
+        return None;
+    }
+
+    let orig_chars: Vec<char> = word.chars().collect();
+    if orig_chars
+        .iter()
+        .any(|&c| !is_romaji_letter(c) && c != '\'')
+    {
+        return None;
+    }
+
+    // Must contain at least one letter
+    if !orig_chars.iter().any(|&c| is_romaji_letter(c)) {
+        return None;
+    }
+
+    let lower_chars: Vec<char> = orig_chars.iter().copied().map(lower_romaji_char).collect();
+    let n = lower_chars.len();
+    let mut i = 0;
+    let mut morae: Vec<String> = Vec::new();
+
+    let push_mora_slice = |morae: &mut Vec<String>, start: usize, end: usize| {
+        let last_orig = orig_chars[end - 1];
+        if cfg.strict_mora
+            && let Some(expanded_v) = base_vowel_preserving_case(last_orig)
+        {
+            let mut base: String = orig_chars[start..end - 1].iter().collect();
+            base.push(expanded_v);
+            morae.push(base);
+            morae.push(expanded_v.to_string());
+            return;
+        }
+        morae.push(orig_chars[start..end].iter().collect());
+    };
+
+    while i < n {
+        // Trailing glottal stop apostrophe (e.g. "a'", "matte'")
+        if lower_chars[i] == '\'' {
+            if i + 1 == n && !morae.is_empty() {
+                if let Some(last) = morae.last_mut() {
+                    last.push('\'');
+                }
+                i += 1;
+                continue;
+            }
+            return None;
+        }
+
+        // Moraic n': "n'" before vowel or 'y' (or end of word)
+        if lower_chars[i] == 'n'
+            && i + 1 < n
+            && lower_chars[i + 1] == '\''
+            && (i + 2 == n || is_lower_vowel(lower_chars[i + 2]) || lower_chars[i + 2] == 'y')
+        {
+            let slice_str: String = orig_chars[i..i + 2].iter().collect();
+            if cfg.hatsuon == HatsuonMode::Attach
+                && let Some(last) = morae.last_mut()
+                && !last.ends_with('\'')
+            {
+                last.push_str(&slice_str);
+            } else {
+                morae.push(slice_str);
+            }
+            i += 2;
+            continue;
+        }
+
+        // Moraic n before consonant or end of word
+        if lower_chars[i] == 'n'
+            && (i + 1 == n || (!is_lower_vowel(lower_chars[i + 1]) && lower_chars[i + 1] != 'y'))
+        {
+            let n_char: String = orig_chars[i..i + 1].iter().collect();
+            if cfg.hatsuon == HatsuonMode::Attach
+                && let Some(last) = morae.last_mut()
+                && !last.ends_with('\'')
+            {
+                last.push_str(&n_char);
+            } else {
+                morae.push(n_char);
+            }
+            i += 1;
+            continue;
+        }
+
+        // Consonant onset + vowel
+        if let Some(onset_len) = match_hepburn_onset(&lower_chars[i..]) {
+            let end = i + onset_len + 1;
+            push_mora_slice(&mut morae, i, end);
+            i = end;
+            continue;
+        }
+
+        // Bare vowel mora
+        if is_lower_vowel(lower_chars[i]) {
+            push_mora_slice(&mut morae, i, i + 1);
+            i += 1;
+            continue;
+        }
+
+        return None;
+    }
+
+    if cfg.merge_diphthongs && !cfg.strict_mora && morae.len() > 1 {
+        morae = merge_mora_diphthongs(morae);
+    }
+
+    Some(morae)
+}
+
+const ENGLISH_ONLY_SKIP: &[&str] = &[
+    "are", "awake", "bake", "bare", "base", "before", "bite", "bode", "bone", "bore", "cage",
+    "code", "cope", "cube", "damage", "daze", "done", "dope", "dose", "dude", "dune", "erase",
+    "fade", "fake", "fame", "fare", "fate", "fine", "fire", "fuse", "game", "gate", "gaze",
+    "gone", "here", "heroine", "hide", "hire", "home", "hope", "hose", "huge", "image", "jade",
+    "joke", "june", "kite", "maze", "mere", "mirage", "mode", "mope", "more", "muse", "nine",
+    "node", "none", "nope", "nose", "note", "nude", "one", "page", "parade", "poke", "pope",
+    "pose", "pure", "rage", "rate", "ride", "rode", "rope", "rose", "rude", "rune", "sage",
+    "same", "some", "sure", "tone", "tore", "tube", "tune", "use", "wade", "wage", "wide",
+    "wine", "wire", "woke", "wore", "zone",
+];
+
+const AMBIGUOUS_EN_JP: &[&str] = &[
+    "an", "hate", "in", "made", "make", "mate", "mine", "name", "on", "shine", "take", "wake",
+];
+
+fn is_in_word_list(word: &str, list: &[&str]) -> bool {
+    let lower = word.to_ascii_lowercase();
+    list.binary_search(&lower.as_str()).is_ok()
 }
 
 pub fn split_morae(text: &str, cfg: &RomajiConfig) -> Vec<Vec<String>> {
@@ -695,6 +975,10 @@ enum LineToken {
     Punct(String),
 }
 
+fn is_latin_token_char(c: char) -> bool {
+    is_romaji_letter(c) || c.is_ascii_digit()
+}
+
 fn tokenize_mixed_line(s: &str) -> Vec<LineToken> {
     let chars: Vec<char> = s.chars().collect();
     let mut tokens = Vec::new();
@@ -710,14 +994,35 @@ fn tokenize_mixed_line(s: &str) -> Vec<LineToken> {
                 i += 1;
             }
             tokens.push(LineToken::Japanese(chars[start..i].iter().collect()));
-        } else if c.is_ascii_alphanumeric() {
+        } else if is_latin_token_char(c) {
             let start = i;
             i += 1;
             while i < n {
-                if chars[i].is_ascii_alphanumeric() {
+                if is_latin_token_char(chars[i]) {
                     i += 1;
-                } else if chars[i] == '\'' && i + 1 < n && chars[i + 1].is_ascii_alphanumeric() {
+                } else if matches!(chars[i], '•' | '+')
+                    && i + 1 < n
+                    && is_latin_token_char(chars[i + 1])
+                {
                     i += 2;
+                } else if chars[i] == '\''
+                    && ((i + 1 < n && is_latin_token_char(chars[i + 1]))
+                        || i + 1 == n
+                        || !is_latin_token_char(chars[i + 1]))
+                {
+                    // Include internal apostrophes (gen'in / don't) and trailing glottal stops (matte')
+                    if i + 1 < n && is_latin_token_char(chars[i + 1]) {
+                        i += 2;
+                    } else if i + 1 == n || !chars[i + 1].is_alphabetic() {
+                        // Only attach trailing '\'' if next char isn't part of a closing quote around punctuation?
+                        // Wait: for "a'" followed by space or end, attaching '\'' keeps "matte'" together.
+                        if i > start && !chars[start..i].contains(&'\'') {
+                            i += 1;
+                        }
+                        break;
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -848,6 +1153,91 @@ pub fn convert_text(text: &str, cfg: &RomajiConfig) -> String {
             out_lines.push(convert_line(line, cfg));
         } else {
             out_lines.push(line.to_owned());
+        }
+    }
+    let mut res = out_lines.join("\n");
+    if text.ends_with('\n') {
+        res.push('\n');
+    }
+    res
+}
+
+fn line_has_english_context(tokens: &[LineToken], cfg: &RomajiConfig) -> bool {
+    tokens.iter().any(|tok| {
+        let LineToken::AsciiWord(w) = tok else {
+            return false;
+        };
+        if w.contains('•') || w.contains('+') {
+            let clean: String = w.chars().filter(|&c| c != '•' && c != '+').collect();
+            if is_in_word_list(&clean, ENGLISH_ONLY_SKIP) {
+                return true;
+            }
+            match split_romaji_word_to_morae(&clean, cfg) {
+                None => return true,
+                Some(morae) => {
+                    let expected = morae.join(&cfg.split_char.to_string());
+                    // e.g. "Be•fore" (from English.txt) != "Be•fo•re" (Hepburn)
+                    if !w.eq_ignore_ascii_case(&expected) {
+                        return true;
+                    }
+                    return false;
+                }
+            }
+        }
+        is_in_word_list(w, ENGLISH_ONLY_SKIP) || split_romaji_word_to_morae(w, cfg).is_none()
+    })
+}
+
+fn split_latin_word_preserving_case(
+    w: &str,
+    cfg: &RomajiConfig,
+    has_english_ctx: bool,
+) -> Option<String> {
+    if is_in_word_list(w, ENGLISH_ONLY_SKIP) {
+        return None;
+    }
+    if has_english_ctx && is_in_word_list(w, AMBIGUOUS_EN_JP) {
+        return None;
+    }
+    let morae = split_romaji_word_to_morae(w, cfg)?;
+    let sep = cfg.split_char.to_string();
+    Some(morae.join(&sep))
+}
+
+fn convert_romaji_line_preserving_case(line: &str, cfg: &RomajiConfig) -> String {
+    let (duet_prefix, body) = split_duet_tag(line);
+    let tokens = tokenize_mixed_line(body);
+    let has_english_ctx = line_has_english_context(&tokens, cfg);
+
+    let mut out = String::with_capacity(line.len() + 16);
+    out.push_str(duet_prefix);
+    for tok in &tokens {
+        match tok {
+            LineToken::AsciiWord(w) => {
+                if let Some(split) = split_latin_word_preserving_case(w, cfg, has_english_ctx) {
+                    out.push_str(&split);
+                } else {
+                    out.push_str(w);
+                }
+            }
+            LineToken::Japanese(s) | LineToken::Whitespace(s) | LineToken::Punct(s) => {
+                out.push_str(s);
+            }
+        }
+    }
+    out
+}
+
+pub fn convert_text_with_romaji(text: &str, cfg: &RomajiConfig) -> String {
+    let mut out_lines = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            out_lines.push(String::new());
+        } else if contains_japanese(line) {
+            let converted = convert_line(line, cfg);
+            out_lines.push(convert_romaji_line_preserving_case(&converted, cfg));
+        } else {
+            out_lines.push(convert_romaji_line_preserving_case(line, cfg));
         }
     }
     let mut res = out_lines.join("\n");
@@ -1020,5 +1410,120 @@ mod tests {
         assert!(lines[2].contains("jump up"));
         assert!(lines[2].contains("san•gu•ra•su"));
         assert!(lines[3].contains("ooh yeah (ooh yeah)"));
+    }
+
+    #[test]
+    fn romaji_splitter_matches_japanese_script_across_configs() {
+        let cases = [
+            ("日本語", "nihongo"),
+            ("さようなら", "sayounara"),
+            ("ちょっと待って", "chotto matte"),
+            ("しんぶん", "shinbun"),
+            ("原因", "gen'in"),
+            ("こんや", "kon'ya"),
+            ("マッチ", "matchi"),
+            ("いっしょ", "issho"),
+            ("みっつ", "mittsu"),
+            ("東京", "toukyou"),
+        ];
+
+        let configs = [
+            RomajiConfig {
+                capitalize_first_word: false,
+                ..Default::default()
+            },
+            RomajiConfig {
+                hatsuon: HatsuonMode::Standalone,
+                capitalize_first_word: false,
+                ..Default::default()
+            },
+            RomajiConfig {
+                merge_diphthongs: false,
+                capitalize_first_word: false,
+                ..Default::default()
+            },
+            RomajiConfig {
+                split_char: '+',
+                capitalize_first_word: false,
+                ..Default::default()
+            },
+        ];
+
+        for cfg in &configs {
+            for (jp, roma) in cases {
+                assert_eq!(
+                    convert_text_with_romaji(roma, cfg),
+                    convert_text_with_romaji(jp, cfg),
+                    "mismatch for {jp} / {roma} with {cfg:?}"
+                );
+            }
+        }
+
+        // Strict mora expands macron vowels while non-strict preserves them
+        let strict = RomajiConfig {
+            strict_mora: true,
+            ..Default::default()
+        };
+        assert_eq!(convert_text_with_romaji("tōkyō", &strict), "to•o•kyo•o");
+        let default_cfg = RomajiConfig::default();
+        assert_eq!(convert_text_with_romaji("tōkyō", &default_cfg), "tō•kyō");
+        assert_eq!(convert_text_with_romaji("toukyou", &default_cfg), "tou•kyou");
+        assert_eq!(convert_text_with_romaji("konnichiwa", &default_cfg), "kon•ni•chi•wa");
+        assert_eq!(convert_text_with_romaji("tenmaku", &default_cfg), "ten•ma•ku");
+        assert_eq!(
+            split_romaji_word_to_morae("matchi", &default_cfg),
+            Some(split_kana_to_morae("まっち", &default_cfg))
+        );
+        assert_eq!(
+            split_romaji_word_to_morae("toukyou", &default_cfg),
+            Some(split_kana_to_morae("とうきょう", &default_cfg))
+        );
+    }
+
+    #[test]
+    fn romaji_splitter_preserves_capitalization_and_protects_english() {
+        let cfg = RomajiConfig::default();
+
+        // 100% original casing preserved
+        assert_eq!(convert_text_with_romaji("Nihongo", &cfg), "Ni•hon•go");
+        assert_eq!(convert_text_with_romaji("NIHONGO", &cfg), "NI•HON•GO");
+        assert_eq!(
+            convert_text_with_romaji("Kimi no Na wa", &cfg),
+            "Ki•mi no Na wa"
+        );
+        assert_eq!(convert_text_with_romaji("nihongo", &cfg), "ni•hon•go");
+
+        // Sprinkled English words stay untouched (strict Hepburn rejects + skip list + ambiguous context)
+        assert_eq!(
+            convert_text_with_romaji("Odoridashite jump up now", &cfg),
+            "O•do•ri•da•shi•te jump up now"
+        );
+        assert_eq!(
+            convert_text_with_romaji("Love and heart don't stop stella night baby", &cfg),
+            "Love and heart don't stop stella night baby"
+        );
+        assert_eq!(
+            convert_text_with_romaji("Time by my side give me live fire home one more", &cfg),
+            "Time by my side give me live fire home one more"
+        );
+
+        // Context-sensitive bilingual words
+        assert_eq!(
+            convert_text_with_romaji("Kimi no te made", &cfg),
+            "Ki•mi no te ma•de"
+        );
+        assert_eq!(
+            convert_text_with_romaji("I'll make it shine", &cfg),
+            "I'll make it shine"
+        );
+
+        // Pre-split English.txt words remain untouched and whole output is idempotent
+        let mixed = "[P1] Be•fore ki•mi to some•one a•wake, sayounara\n[P2] ちょっと matte!";
+        let once = convert_text_with_romaji(mixed, &cfg);
+        assert_eq!(
+            once,
+            "[P1] Be•fore ki•mi to some•one a•wake, sa•you•na•ra\n[P2] Cho•tto ma•tte!"
+        );
+        assert_eq!(convert_text_with_romaji(&once, &cfg), once);
     }
 }
