@@ -14,11 +14,11 @@ This repository is an enhanced distribution of UltraStar-Creator maintained by *
 #### Versioning Scheme
 Releases follow [Semantic Versioning](https://semver.org/) extended with a fork identifier:
 ```text
-v<upstream-base>-takai.<patch>
+v<major>.<minor>.<patch>-takai.<revision>
 ```
-Example: **`v1.5.0-takai.1`**
-- **Upstream Base (`1.5.0`)**: Tracks upstream UltraStar-Creator milestones plus the native Rust rewrite.
-- **Fork Suffix (`-takai.<patch>`)**: Identifies releases specific to this distribution. This ensures version tags never collide with upstream tags and clearly indicates the build origin to end users.
+Example: **`v2.0.0-takai.1`**
+- **Major Version (`2.0.0`)**: Marks the native Rust + `egui` rewrite generation following the `1.x` C++/Qt releases.
+- **Fork Suffix (`-takai.<revision>`)**: Identifies releases specific to this distribution. This ensures version tags never collide with upstream tags and clearly indicates the build origin to end users.
 - **Automated CI/CD**: Pushing a `v*` version tag triggers GitHub Actions to build, test, verify, and package standalone portable archives across Windows, Linux, and macOS (`.zip` / `.tar.gz` / `.app`) and draft a release on [GitHub Releases](https://github.com/HNTA-Club/UltraStar-Creator/releases).
 
 ### 3. Controls & Hotkeys
