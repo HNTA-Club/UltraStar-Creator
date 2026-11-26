@@ -6,6 +6,10 @@ on:
   pull_request:
     paths: ['usc/**', 'syllabification/**', 'setup/**', '.github/workflows/rust.yml']
 
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:

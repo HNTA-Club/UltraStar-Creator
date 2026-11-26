@@ -1,7 +1,7 @@
 name: Rust Package
 on:
   push:
-    branches: [develop, master]
+    branches: [master]
     tags: ['v*']
   workflow_dispatch:
 
