@@ -6,6 +6,7 @@ use libloading::Library;
 
 const BASS_STREAM_PRESCAN: u32 = 0x20000;
 const BASS_STREAM_DECODE: u32 = 0x200000;
+#[cfg(windows)]
 const BASS_UNICODE: u32 = 0x8000_0000;
 const BASS_POS_BYTE: u32 = 0;
 const BASS_ACTIVE_PLAYING: u32 = 1;

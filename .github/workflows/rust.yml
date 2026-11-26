@@ -13,6 +13,9 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      ORT_CACHE_DIR: ${{ github.workspace }}/.ci-cache/ort
+      LINDERA_BUILD_DICTIONARY_CACHE_DIR: ${{ github.workspace }}/.ci-cache/lindera
     defaults:
       run:
         working-directory: usc
@@ -26,15 +29,18 @@ jobs:
           components: clippy
       - uses: actions/cache@v5
         with:
-          path: |
-            usc/target/ort-cache
-            usc/target/lindera-cache
-          key: ${{ runner.os }}-ort-lindera-${{ hashFiles('usc/Cargo.lock') }}
+          path: .ci-cache
+          key: ${{ runner.os }}-ci-cache-v2-${{ hashFiles('usc/Cargo.lock') }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: usc
+          prefix-key: v2-rust
       - name: Prepare target directories for ort-sys dylib copy
         shell: bash
-        run: mkdir -p target/debug/examples target/debug/deps target/debug/build/examples target/debug/build/deps
+        run: |
+          if [ ! -d "../.ci-cache/lindera" ] || [ ! -d "../.ci-cache/ort" ]; then
+            rm -rf target/*/build/lindera-ipadic* target/*/build/ort-sys* target/*/.fingerprint/lindera-ipadic* target/*/.fingerprint/ort-sys*
+          fi
+          mkdir -p target/debug/examples target/debug/deps target/debug/build/examples target/debug/build/deps
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
