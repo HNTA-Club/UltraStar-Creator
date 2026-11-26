@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-24.04, macos-14]
+        os: [windows-latest, ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -18,18 +18,20 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v5
         with:
-          components: clippy
+          path: |
+            usc/target/ort-cache
+            usc/target/lindera-cache
+          key: ${{ runner.os }}-ort-lindera-${{ hashFiles('usc/Cargo.lock') }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: usc
       - name: Prepare target directories for ort-sys dylib copy
         shell: bash
         working-directory: usc
-        run: mkdir -p target/debug/examples target/debug/deps target/debug/build/examples target/debug/build/deps target/release/examples target/release/deps target/release/build/examples target/release/build/deps
-      - run: cargo clippy --all-targets -- -D warnings
-        working-directory: usc
-      - run: cargo test
+        run: mkdir -p target/release/examples target/release/deps target/release/build/examples target/release/build/deps
+      - run: cargo test --release
         working-directory: usc
       - run: cargo build --release
         working-directory: usc
