@@ -36,7 +36,7 @@ pub enum VideoPreset {
 }
 
 impl VideoPreset {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Compact => "Compact (720p, CRF 24)",
             Self::Balanced => "Balanced (720p, CRF 22)",
@@ -45,7 +45,7 @@ impl VideoPreset {
         }
     }
 
-    pub fn crf(self) -> u8 {
+    pub const fn crf(self) -> u8 {
         match self {
             Self::Compact => 24,
             Self::Balanced => 22,
@@ -54,7 +54,7 @@ impl VideoPreset {
         }
     }
 
-    pub fn max_height(self) -> Option<u32> {
+    pub const fn max_height(self) -> Option<u32> {
         match self {
             Self::Compact | Self::Balanced => Some(720),
             Self::High => Some(1080),
@@ -62,7 +62,7 @@ impl VideoPreset {
         }
     }
 
-    pub fn x264_preset(self) -> &'static str {
+    pub const fn x264_preset(self) -> &'static str {
         match self {
             Self::Compact | Self::Balanced | Self::Source => "slow",
             Self::High => "medium",
@@ -79,7 +79,7 @@ pub enum ComputeDevice {
 }
 
 impl ComputeDevice {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Auto => "Auto (Best available)",
             Self::Cpu => "CPU",
@@ -117,7 +117,7 @@ pub enum StemsEvent {
     Finished(Result<DerivedOutputs, String>),
 }
 
-pub fn configure_no_window(cmd: &mut Command) {
+pub const  fn configure_no_window(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;

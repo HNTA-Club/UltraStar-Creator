@@ -66,7 +66,7 @@ pub struct JapaneseWord {
     pub is_particle: bool,
 }
 
-pub fn is_japanese_char(c: char) -> bool {
+pub const fn is_japanese_char(c: char) -> bool {
     matches!(
         c,
         '\u{3040}'..='\u{309F}'
@@ -445,7 +445,7 @@ fn base_vowel(c: char) -> Option<char> {
     }
 }
 
-fn macron_for_vowel(v: char) -> char {
+const fn macron_for_vowel(v: char) -> char {
     match v {
         'a' => 'ā',
         'i' => 'ī',
@@ -667,7 +667,7 @@ fn merge_mora_diphthongs(morae: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn lower_romaji_char(c: char) -> char {
+const fn lower_romaji_char(c: char) -> char {
     match c {
         'Ā' => 'ā',
         'Ī' => 'ī',
@@ -678,11 +678,11 @@ fn lower_romaji_char(c: char) -> char {
     }
 }
 
-fn is_romaji_letter(c: char) -> bool {
+const fn is_romaji_letter(c: char) -> bool {
     c.is_ascii_alphabetic() || matches!(c, 'ā' | 'ī' | 'ū' | 'ē' | 'ō' | 'Ā' | 'Ī' | 'Ū' | 'Ē' | 'Ō')
 }
 
-fn base_vowel_preserving_case(c: char) -> Option<char> {
+const fn base_vowel_preserving_case(c: char) -> Option<char> {
     match c {
         'ā' => Some('a'),
         'ī' => Some('i'),
@@ -698,7 +698,7 @@ fn base_vowel_preserving_case(c: char) -> Option<char> {
     }
 }
 
-fn is_lower_vowel(c: char) -> bool {
+const fn is_lower_vowel(c: char) -> bool {
     matches!(
         c,
         'a' | 'i' | 'u' | 'e' | 'o' | 'ā' | 'ī' | 'ū' | 'ē' | 'ō'
@@ -975,7 +975,7 @@ enum LineToken {
     Punct(String),
 }
 
-fn is_latin_token_char(c: char) -> bool {
+const fn is_latin_token_char(c: char) -> bool {
     is_romaji_letter(c) || c.is_ascii_digit()
 }
 

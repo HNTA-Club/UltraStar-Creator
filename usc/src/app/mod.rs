@@ -34,7 +34,7 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Light => "light",
@@ -1897,7 +1897,7 @@ fn configure_cjk_fallback_font(ctx: &egui::Context) {
     }
 }
 
-pub fn is_play_enabled(state: PlaybackState) -> bool {
+pub const fn is_play_enabled(state: PlaybackState) -> bool {
     matches!(
         state,
         PlaybackState::Initialized | PlaybackState::Playing | PlaybackState::Paused

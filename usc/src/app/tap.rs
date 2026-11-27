@@ -21,7 +21,7 @@ pub struct TapActions {
     pub save: bool,
 }
 
-pub fn filter_label(filter: Filter) -> &'static str {
+pub const fn filter_label(filter: Filter) -> &'static str {
     match filter {
         Filter::All => "All Singers",
         Filter::P1AndBoth => "P1 + Both",

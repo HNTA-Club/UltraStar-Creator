@@ -20,7 +20,7 @@ pub enum Filter {
 }
 
 impl Filter {
-    fn includes(self, role: Role) -> bool {
+    const fn includes(self, role: Role) -> bool {
         matches!(
             (self, role),
             (_, Role::Solo)
@@ -43,14 +43,14 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(syllables: Vec<Syllable>, filter: Filter, earlier: Vec<Note>) -> Session {
+    pub fn new(syllables: Vec<Syllable>, filter: Filter, earlier: Vec<Note>) -> Self {
         let queue = syllables
             .iter()
             .enumerate()
             .filter_map(|(i, s)| filter.includes(s.role).then_some(i))
             .collect();
         let notes = earlier.into_iter().map(|n| (n.syllable, n)).collect();
-        Session {
+        Self {
             syllables,
             queue,
             pos: 0,
@@ -59,7 +59,7 @@ impl Session {
         }
     }
 
-    pub fn press(&mut self, t_ms: f64) {
+    pub const fn press(&mut self, t_ms: f64) {
         if self.pressed.is_some() || self.pos >= self.queue.len() {
             return;
         }
@@ -142,7 +142,7 @@ impl Session {
         &self.syllables
     }
 
-    pub fn progress(&self) -> (usize, usize) {
+    pub const fn progress(&self) -> (usize, usize) {
         (self.pos, self.queue.len())
     }
 
@@ -150,7 +150,7 @@ impl Session {
         &self.queue[self.pos..]
     }
 
-    pub fn is_pressed(&self) -> bool {
+    pub const fn is_pressed(&self) -> bool {
         self.pressed.is_some()
     }
 

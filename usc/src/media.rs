@@ -159,7 +159,7 @@ pub enum ImageSlot {
 }
 
 impl ImageSlot {
-    pub fn suffix(self) -> &'static str {
+    pub const fn suffix(self) -> &'static str {
         match self {
             Self::Cover => "[CO]",
             Self::Background => "[BG]",

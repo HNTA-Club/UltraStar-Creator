@@ -6,7 +6,7 @@ use crate::lyrics::Role;
 use crate::romaji::{HatsuonMode, LongVowelMode, RomajiConfig};
 use crate::tapping::Session;
 
-pub fn role_tag(role: Role) -> &'static str {
+pub const fn role_tag(role: Role) -> &'static str {
     match role {
         Role::P1 => "[P1]",
         Role::P2 => "[P2]",
@@ -15,7 +15,7 @@ pub fn role_tag(role: Role) -> &'static str {
     }
 }
 
-pub fn role_accent(role: Role) -> egui::Color32 {
+pub const fn role_accent(role: Role) -> egui::Color32 {
     match role {
         Role::P1 => egui::Color32::from_rgb(37, 99, 235),
         Role::P2 => egui::Color32::from_rgb(220, 38, 38),
@@ -24,7 +24,7 @@ pub fn role_accent(role: Role) -> egui::Color32 {
     }
 }
 
-pub fn role_tint(role: Role, dark: bool) -> egui::Color32 {
+pub const fn role_tint(role: Role, dark: bool) -> egui::Color32 {
     match (role, dark) {
         (Role::P1, false) => egui::Color32::from_rgb(219, 234, 254),
         (Role::P1, true) => egui::Color32::from_rgb(30, 58, 95),

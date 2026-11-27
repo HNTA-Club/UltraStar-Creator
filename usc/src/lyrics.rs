@@ -8,7 +8,7 @@ pub enum Role {
     Both,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Syllable {
     pub text: String,
     pub role: Role,
@@ -132,7 +132,7 @@ pub fn syllabify_with_sep(text: &str, dictionary: &str, sep: char) -> String {
     out
 }
 
-fn is_word_delim(c: char) -> bool {
+const fn is_word_delim(c: char) -> bool {
     matches!(c, ' ' | '\n' | ',' | '!' | '.' | '?' | '(' | ')' | ';' | ':' | '-')
 }
 
@@ -165,7 +165,7 @@ fn flush_word(word: &mut String, dict: &HashMap<String, &str>, sep: char, out: &
     word.clear();
 }
 
-fn is_syllable_sep(c: char) -> bool {
+const fn is_syllable_sep(c: char) -> bool {
     matches!(c, ' ' | '•' | '+' | '-')
 }
 
