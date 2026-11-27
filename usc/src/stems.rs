@@ -117,7 +117,9 @@ pub enum StemsEvent {
     Finished(Result<DerivedOutputs, String>),
 }
 
-pub const  fn configure_no_window(cmd: &mut Command) {
+
+#[expect(clippy::missing_const_for_fn)]
+pub fn configure_no_window(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
