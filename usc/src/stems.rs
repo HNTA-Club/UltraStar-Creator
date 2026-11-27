@@ -800,7 +800,7 @@ fn split_file_cancellable(
 
         chunk_done += 1;
         let pct = chunk_done as f32 / total_chunks as f32 * 100.0;
-        let frac = 0.25 + (pct / 100.0) * 0.55;
+        let frac = (pct / 100.0).mul_add(0.55, 0.25);
         send_progress(
             tx,
             frac,
@@ -1201,7 +1201,7 @@ pub fn process_media(
                         let pct = downloaded as f32 / total as f32;
                         send_progress(
                             &tx_dl,
-                            0.10 + pct * 0.15,
+                            pct.mul_add(0.15, 0.10),
                             format!(
                                 "Downloading HTDemucs model ({:.1} / {:.1} MB)…",
                                 downloaded as f64 / 1_048_576.0,
