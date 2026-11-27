@@ -757,7 +757,7 @@ fn split_file_cancellable(
                 name_idx
                     .get(key)
                     .copied()
-                    .unwrap_or(fallback.min(stems_count.saturating_sub(1)))
+                    .unwrap_or_else(|| fallback.min(stems_count.saturating_sub(1)))
             };
             stem_outputs = vec![
                 StemOut {
