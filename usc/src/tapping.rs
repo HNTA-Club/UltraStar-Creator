@@ -24,12 +24,12 @@ impl Filter {
         matches!(
             (self, role),
             (_, Role::Solo)
-                | (Filter::All, _)
-                | (Filter::P1AndBoth, Role::P1 | Role::Both)
-                | (Filter::P2AndBoth, Role::P2 | Role::Both)
-                | (Filter::P1Only, Role::P1)
-                | (Filter::P2Only, Role::P2)
-                | (Filter::BothOnly, Role::Both)
+                | (Self::All, _)
+                | (Self::P1AndBoth, Role::P1 | Role::Both)
+                | (Self::P2AndBoth, Role::P2 | Role::Both)
+                | (Self::P1Only, Role::P1)
+                | (Self::P2Only, Role::P2)
+                | (Self::BothOnly, Role::Both)
         )
     }
 }
