@@ -174,10 +174,9 @@ fn strip_role_tag(line: &str) -> (&str, Option<Role>) {
     let Some(after_open) = trimmed.strip_prefix('[') else {
         return (line, None);
     };
-    let Some(close_idx) = after_open.find(']') else {
+    let Some((tag, rest)) = after_open.split_once(']') else {
         return (line, None);
     };
-    let tag = &after_open[..close_idx];
     let role = if tag.eq_ignore_ascii_case("p1") {
         Role::P1
     } else if tag.eq_ignore_ascii_case("p2") {
@@ -187,7 +186,7 @@ fn strip_role_tag(line: &str) -> (&str, Option<Role>) {
     } else {
         return (line, None);
     };
-    (after_open[close_idx + 1..].trim_start(), Some(role))
+    (rest.trim_start(), Some(role))
 }
 
 #[cfg(test)]

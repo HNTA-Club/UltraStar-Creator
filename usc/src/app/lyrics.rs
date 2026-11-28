@@ -42,10 +42,9 @@ pub fn parse_line_role(line: &str) -> (Role, &str) {
     let Some(after_open) = trimmed.strip_prefix('[') else {
         return (Role::Solo, line);
     };
-    let Some(close_idx) = after_open.find(']') else {
+    let Some((tag, rest)) = after_open.split_once(']') else {
         return (Role::Solo, line);
     };
-    let tag = &after_open[..close_idx];
     let role = if tag.eq_ignore_ascii_case("p1") {
         Role::P1
     } else if tag.eq_ignore_ascii_case("p2") {
@@ -55,7 +54,7 @@ pub fn parse_line_role(line: &str) -> (Role, &str) {
     } else {
         return (Role::Solo, line);
     };
-    (role, after_open[close_idx + 1..].trim_start())
+    (role, rest.trim_start())
 }
 
 pub fn toggle_role_on_lines(
@@ -523,7 +522,7 @@ fn build_teleprompter_row_job(
         };
 
         let trimmed = syl.text.trim_end_matches(' ');
-        let trailing_spaces = &syl.text[trimmed.len()..];
+        let (_, trailing_spaces) = syl.text.split_at(trimmed.len());
 
         if !trimmed.is_empty() {
             let start = job.text.len();

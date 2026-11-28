@@ -487,9 +487,11 @@ pub fn elongate_vowel(prev_romaji: &str, long_vowels: LongVowelMode) -> String {
     match long_vowels {
         LongVowelMode::Macron => {
             let mut out = String::with_capacity(prev_romaji.len() + 2);
-            out.push_str(&prev_romaji[..range.start]);
+            let (before, at_and_after) = prev_romaji.split_at(range.start);
+            let (_, after) = at_and_after.split_at(range.end - range.start);
+            out.push_str(before);
             out.push(macron_for_vowel(vowel_char));
-            out.push_str(&prev_romaji[range.end..]);
+            out.push_str(after);
             out
         }
         LongVowelMode::Ascii | LongVowelMode::Double => {
@@ -1137,7 +1139,8 @@ fn split_duet_tag(line: &str) -> (&str, &str) {
     for tag in ["[P1]", "[p1]", "[P2]", "[p2]", "[Both]", "[both]", "[BOTH]"] {
         if let Some(rest) = trimmed.strip_prefix(tag) {
             let prefix_len = line.len() - rest.trim_start().len();
-            return (&line[..prefix_len], rest.trim_start());
+            let (prefix, _) = line.split_at(prefix_len);
+            return (prefix, rest.trim_start());
         }
     }
     ("", line)
