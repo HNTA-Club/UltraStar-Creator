@@ -174,27 +174,39 @@ fn run_command_cancellable(
         match child.try_wait() {
             Ok(Some(status)) => {
                 let stderr = stderr_handle.join().unwrap_or_default();
+
                 if status.success() {
                     return Ok(());
                 }
-                let tail: Vec<&str> = stderr.lines().rev().take(4).collect();
-                let summary = tail.into_iter().rev().collect::<Vec<_>>().join(" | ");
-                return Err(format!(
-                    "{step_label} failed: {}",
-                    if summary.is_empty() {
-                        "non-zero exit code"
-                    } else {
-                        &summary
-                    }
-                ));
+
+                let summary = stderr
+                    .lines()
+                    .rev()
+                    .take(4)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+
+                let message = if summary.is_empty() {
+                    "non-zero exit code".to_string()
+                } else {
+                    summary
+                };
+
+                return Err(format!("{step_label} failed: {message}"));
             }
-            Ok(None) => {
-                thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
+
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+
+            Err(error) => {
                 let _ = child.kill();
                 let _ = stderr_handle.join();
-                return Err(format!("{step_label}: error waiting on process: {e}"));
+
+                return Err(format!(
+                    "{step_label}: error waiting on process: {error}"
+                ));
             }
         }
     }
