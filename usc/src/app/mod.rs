@@ -627,11 +627,9 @@ impl UscApp {
             return;
         };
         let t_ms = engine.position_ms();
-        let finished = if let Some(session) = &mut self.session {
-            session.release(t_ms)
-        } else {
-            false
-        };
+        let finished = self.session
+            .as_mut()
+            .is_some_and(|session| session.release(t_ms));
         self.refresh_output();
 
         if finished {
