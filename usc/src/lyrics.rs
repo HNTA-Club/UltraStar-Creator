@@ -94,8 +94,10 @@ pub fn syllables(text: &str, duet: bool) -> Vec<Syllable> {
             });
         }
 
-        if out.len() > line_start {
-            out.last_mut().expect("just pushed").line_end = true;
+        if out.len() > line_start
+            && let Some(last) = out.last_mut()
+        {
+            last.line_end = true;
         }
     }
 
