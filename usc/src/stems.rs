@@ -324,9 +324,11 @@ pub fn has_video_stream(media_path: &Path) -> bool {
     if !media_path.is_file() {
         return false;
     }
-    if let Some(false) = is_video_extension(media_path) {
+
+    if  is_video_extension(media_path) == Some(false) {
         return false;
     }
+
     if let Some(ffprobe) = get_ffprobe_path() {
         let mut cmd = Command::new(ffprobe);
         configure_no_window(&mut cmd);
