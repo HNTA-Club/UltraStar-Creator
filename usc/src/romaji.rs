@@ -544,7 +544,6 @@ pub fn split_kana_to_morae(kana_text: &str, cfg: &RomajiConfig) -> Vec<String> {
                         next_romaji
                     };
                 morae.push(geminated);
-                continue;
             } else {
                 if let Some(last) = morae.last_mut() {
                     last.push('\'');
@@ -552,8 +551,8 @@ pub fn split_kana_to_morae(kana_text: &str, cfg: &RomajiConfig) -> Vec<String> {
                     morae.push("'".to_owned());
                 }
                 u_idx += 1;
-                continue;
             }
+            continue;
         }
 
         // Choonpu (ー)
