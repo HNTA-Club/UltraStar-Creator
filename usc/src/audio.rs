@@ -332,14 +332,23 @@ impl Drop for AudioEngine {
 }
 
 pub fn normalize_bpm(raw: f32) -> f64 {
+    const DEFAULT_BPM: f64 = 400.0;
+    const MIN_BPM: f64 = 200.0;
+
     if !raw.is_finite() || raw <= 0.0 {
-        return 400.0;
+        return DEFAULT_BPM;
     }
+
     let mut bpm = (f64::from(raw) * 2.0).round() / 2.0;
     if bpm <= 0.0 {
-        return 400.0;
+        return DEFAULT_BPM;
     }
-    while bpm <= 200.0 {
+
+    #[expect(
+        clippy::while_float,
+        reason = "Multiplyting here is easier than calculating the amount using logarthms"
+    )]
+    while bpm <= MIN_BPM {
         bpm *= 2.0;
     }
     bpm
