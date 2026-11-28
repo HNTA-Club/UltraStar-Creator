@@ -113,15 +113,11 @@ impl Session {
             start -= 1;
         }
 
-        let mut earliest: Option<f64> = None;
-        for &syl_idx in &self.queue[start..self.pos] {
-            if let Some(removed) = self.notes.remove(&syl_idx) {
-                earliest = Some(match earliest {
-                    Some(prev) => prev.min(removed.start_ms),
-                    None => removed.start_ms,
-                });
-            }
-        }
+       let earliest = self.queue[start..self.pos]
+            .iter()
+            .filter_map(|&syl_idx| self.notes.remove(&syl_idx))
+            .map(|note| note.start_ms)
+            .reduce(f64::min);
         self.pos = start;
 
         if self.pos == 0 {
