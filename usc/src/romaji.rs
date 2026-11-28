@@ -85,6 +85,7 @@ static SEGMENTER: OnceLock<Segmenter> = OnceLock::new();
 
 fn get_segmenter() -> &'static Segmenter {
     SEGMENTER.get_or_init(|| {
+        #[expect(clippy::expect_used, reason = "Expecting here is ok. Needs a refactor to be renoved.")]
         let dictionary =
             load_dictionary("embedded://ipadic").expect("embedded IPADIC dictionary must load");
         Segmenter::new(Mode::Normal, dictionary, None)
