@@ -118,7 +118,7 @@ pub enum StemsEvent {
 }
 
 
-#[expect(clippy::missing_const_for_fn)]
+#[expect(clippy::missing_const_for_fn, reason = "Not actually a const function")]
 pub fn configure_no_window(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
     {
